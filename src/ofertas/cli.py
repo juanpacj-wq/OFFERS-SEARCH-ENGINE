@@ -139,6 +139,11 @@ def _analizador() -> argparse.ArgumentParser:
         help="Incluye las tiendas que abren una ventana de Edge (Amazon, Dafiti, Decathlon).",
     )
     buscar.add_argument(
+        "--archivo", action="store_true",
+        help="Para lo que no se pudo comprobar, busca el precio que mostraba la página en"
+             " copias antiguas del archivo de Internet. Suma varios segundos.",
+    )
+    buscar.add_argument(
         "--sin-historial", action="store_true",
         help="No consulta ni guarda el historial de precios en esta búsqueda.",
     )
@@ -525,7 +530,11 @@ def main(argv: list[str] | None = None) -> int:
         args.consulta.strip(),
         tiendas,
         usar_historial=not args.sin_historial,
-        verificar={"mostradas": args.max, "con_internacional": not args.sin_internacional},
+        verificar={
+            "mostradas": args.max,
+            "con_internacional": not args.sin_internacional,
+            "con_archivo": args.archivo,
+        },
         limite_por_tienda=args.por_tienda,
         incluir_agotados=args.agotados,
         filtrar=not args.sin_filtro,

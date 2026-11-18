@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from statistics import quantiles
 
-from ofertas import identidad, internacional, motor, veredicto
+from ofertas import archivo, identidad, internacional, motor, veredicto
 from ofertas.conectores import navegador
 from ofertas.identidad import Grupo
 from ofertas.modelos import Oferta, Resultado
 from ofertas.tiendas import seleccionar
 
+# En modo profundo, cuántas páginas de producto se consultan en el archivo de Internet
+# y cuántas a la vez. Cada una toma varios segundos.
+PAGINAS_EN_ARCHIVO = 12
+PAGINAS_EN_ARCHIVO_NORMAL = 6
+ARCHIVO_A_LA_VEZ = 6
 # En modo profundo, cuántas fichas técnicas distintas se salen a buscar en las tiendas.
 FICHAS_A_AMPLIAR = 2
 # Cuántos productos distintos se investigan afuera en una búsqueda normal y en una profunda.
@@ -88,6 +94,7 @@ async def verificar(
     con_internacional: bool = True,
     profundo: bool = False,
     con_amazon: bool = False,
+    con_archivo: bool = False,
     max_grupos: int | None = None,
     transporte=None,
 ) -> tuple[list[Grupo], list[str]]:
@@ -178,8 +185,85 @@ async def verificar(
                     "fuentes": referencia.fuentes,
                 }
             oferta.veredicto = datos
+    if profundo or con_archivo:
+        # En una búsqueda normal solo se consulta para lo que se va a mostrar.
+        elegibles = (
+            ordenar_para_informe(grupos)[: max_grupos or GRUPOS_PROFUNDO]
+            if profundo
+            else _grupos_mostrados(grupos, resultado.ofertas, mostradas)
+        )
+        aviso = await _reforzar_con_archivo(
+            resultado, grupos, elegibles, conexion,
+            PAGINAS_EN_ARCHIVO if profundo else PAGINAS_EN_ARCHIVO_NORMAL, transporte,
+        )
+        if aviso:
+            avisos.append(aviso)
     _agregar_contexto(resultado.ofertas)
     return grupos, avisos
+
+
+def _necesita_archivo(oferta: Oferta) -> bool:
+    """Anuncia descuento y no tiene evidencia firme: ahí una copia antigua sí aporta."""
+    juicio = oferta.veredicto or {}
+    return oferta.descuento_pct >= veredicto.DESCUENTO_ANUNCIADO_MINIMO and (
+        juicio.get("clase") == "sin_referencia" or juicio.get("confianza") != "fuerte"
+    )
+
+
+def _grupos_mostrados(grupos: list[Grupo], ofertas: list[Oferta], mostradas: int) -> list[Grupo]:
+    de_oferta = {id(o): g for g in grupos for o in g.ofertas}
+    vistos: list[Grupo] = []
+    for oferta in ofertas[:mostradas]:
+        if de_oferta[id(oferta)] not in vistos:
+            vistos.append(de_oferta[id(oferta)])
+    return vistos
+
+
+async def _reforzar_con_archivo(
+    resultado: Resultado,
+    grupos: list[Grupo],
+    elegibles: list[Grupo],
+    conexion: sqlite3.Connection,
+    maximo: int,
+    transporte=None,
+) -> str | None:
+    """Consulta el archivo de Internet para las ofertas del informe sin evidencia firme.
+
+    Si la página tenía copia con precio, rehace el veredicto de esa oferta con ella.
+    Devuelve un aviso con cuántas páginas tenían copia, o None si no consultó ninguna.
+    """
+    candidatas = [o for g in elegibles for o in g.ofertas if _necesita_archivo(o)][:maximo]
+    if not candidatas:
+        return None
+    de_oferta = {id(o): g for g in grupos for o in g.ofertas}
+    semaforo = asyncio.Semaphore(ARCHIVO_A_LA_VEZ)
+    async with motor.crear_cliente(transporte) as cliente:
+
+        async def una(oferta: Oferta) -> list[dict]:
+            async with semaforo:
+                return await archivo.precios_pasados(cliente, conexion, oferta.url)
+
+        halladas = await asyncio.gather(*(una(o) for o in candidatas))
+    con_copia = 0
+    for oferta, precios in zip(candidatas, halladas, strict=True):
+        if not precios:
+            continue
+        con_copia += 1
+        grupo = de_oferta[id(oferta)]
+        previo = oferta.veredicto or {}
+        juicio = veredicto.evaluar(
+            oferta, grupo.otras_tiendas(oferta), oferta.historial, archivo=precios
+        )
+        datos = juicio.a_dict()
+        for clave in ("coincidencia_entre_tiendas", "internacional"):
+            if clave in previo:
+                datos[clave] = previo[clave]
+        datos["archivo"] = precios
+        oferta.veredicto = datos
+    return (
+        f"Archivo de Internet: {con_copia} de {len(candidatas)} páginas consultadas tenían"
+        " una copia antigua con precio."
+    )
 
 
 # Para describir el mercado de una búsqueda hacen falta suficientes productos y tiendas.

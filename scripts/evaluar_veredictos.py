@@ -1,6 +1,9 @@
 """Corre el veredicto sobre varias categorías y resume qué tanto logra comprobar.
 
-Uso:  uv run python scripts/evaluar_veredictos.py [salida.md]
+Uso:  uv run python scripts/evaluar_veredictos.py [salida.md] [--archivo]
+
+Con --archivo, lo que no se pudo comprobar se busca además en el archivo de Internet
+(como hace `ofertas buscar --archivo`), lo que suma varios segundos por búsqueda.
 
 Consulta las tiendas reales y las fuentes internacionales, así que el resultado cambia
 con el día. Usa una base temporal: no toca el historial ni aprovecha lo ya consultado.
@@ -36,13 +39,16 @@ CONSULTAS = [
     "perfume hombre",
 ]
 MOSTRADAS = 20
+CON_ARCHIVO = "--archivo" in sys.argv
 COLUMNAS = ("descuento_real", "oferta_falsa", "sobreprecio", "sin_referencia")
 
 
 async def evaluar(consulta: str, conexion) -> dict:
     inicio = time.perf_counter()
     resultado = await motor.buscar(consulta, seleccionar(None))
-    await verificacion.verificar(resultado, conexion, mostradas=MOSTRADAS)
+    await verificacion.verificar(
+        resultado, conexion, mostradas=MOSTRADAS, con_archivo=CON_ARCHIVO
+    )
     segundos = time.perf_counter() - inicio
     mostradas = resultado.ofertas[:MOSTRADAS]
     con_descuento = [
@@ -91,7 +97,9 @@ async def main() -> None:
         "# Evaluación del veredicto por categoría",
         "",
         f"Corrida del {date.today().isoformat()} con `scripts/evaluar_veredictos.py`, contra las"
-        " tiendas reales y sin historial previo. Se miran las primeras"
+        " tiendas reales y sin historial previo"
+        + (", usando además el archivo de Internet" if CON_ARCHIVO else "")
+        + ". Se miran las primeras"
         f" {MOSTRADAS} ofertas de cada búsqueda (ordenadas por precio) y, de ellas, las que"
         " anuncian descuento.",
         "",
@@ -133,8 +141,9 @@ async def main() -> None:
         "- **Tiempo:** búsqueda en las tiendas más verificación, sin nada en caché.",
     ]
     texto = "\n".join(lineas) + "\n"
-    if len(sys.argv) > 1:
-        Path(sys.argv[1]).write_text(texto, encoding="utf-8")
+    destinos = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if destinos:
+        Path(destinos[0]).write_text(texto, encoding="utf-8")
     sys.stdout.reconfigure(encoding="utf-8")
     print(texto)
 

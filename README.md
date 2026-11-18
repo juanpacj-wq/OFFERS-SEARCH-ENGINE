@@ -30,6 +30,7 @@ uv run ofertas buscar "televisor 55" --solo-reales --orden ahorro
 uv run ofertas verificar "galaxy s25 ultra 256gb"              # informe a fondo por producto
 uv run ofertas verificar "portatil lenovo" --navegador         # además consulta Amazon
 uv run ofertas buscar "morral" --sin-internacional             # solo tiendas e historial
+uv run ofertas buscar "morral totto" --archivo                 # suma copias antiguas de la página
 ```
 
 ### De dónde sale el precio real
@@ -41,8 +42,13 @@ En orden de confianza:
    vendedor repetido en varias tiendas cuentan como una sola voz.
 2. **Misma referencia en otro color:** cuando el producto idéntico no está en dos
    tiendas más, sirve la misma referencia en otra presentación.
-3. **Historial propio:** el precio habitual del producto en esa tienda (3 observaciones
-   en 7 días o más).
+3. **Copias antiguas de la página** en el archivo de Internet (Wayback Machine): lo que
+   esa misma página mostraba hace unos tres meses y hace un año. Sirve justo para lo
+   que solo vende una tienda: si en abril valía $89.900, un "antes $129.990" está
+   inflado. Cerca de un tercio de las páginas tiene copia, y bajarla toma varios
+   segundos, así que se usa siempre en `verificar` y en `buscar` solo con `--archivo`.
+   **Historial propio:** el precio habitual del producto en esa tienda según las
+   búsquedas anteriores (3 observaciones en 7 días o más).
 4. **Precio internacional:** lo que cuesta afuera, convertido con la TRM oficial del
    día, más el IVA (19%), el arancel de la categoría y hasta 20% por flete, seguro y
    margen comercial. El arancel sale del Banco Mundial (WITS): 0% para portátiles,
@@ -135,7 +141,9 @@ solo 274 (15%) eran descuentos reales.
   Para ellos queda el juicio por mercado de la búsqueda (ver abajo) y el historial.
 
 Las más baratas de una búsqueda amplia son las más difíciles de comprobar, porque suelen
-ser productos que solo vende una tienda.
+ser productos que solo vende una tienda. Con `--archivo` la comprobación de las 20
+primeras ofertas sube de 55% a 59% (`docs/evaluacion-veredictos-archivo.md`), a cambio
+de 10 a 20 segundos más por búsqueda.
 
 ### Límites que conviene conocer
 
@@ -268,6 +276,7 @@ Sin conectar, con el motivo comprobado el 2026-11-18 (`uv run ofertas tiendas` l
 - `src/ofertas/identidad.py`: reconoce el mismo producto entre tiendas.
 - `src/ofertas/veredicto.py`: decide si un descuento es real (lógica pura).
 - `src/ofertas/internacional.py`: investiga el precio en el exterior y la TRM.
+- `src/ofertas/archivo.py`: precios pasados según el archivo de Internet.
 - `src/ofertas/aranceles.py`: arancel de Colombia por categoría (Banco Mundial, WITS).
 - `scripts/evaluar_veredictos.py`: mide qué tanto comprueba el veredicto por categoría.
 - `src/ofertas/verificacion.py`: une identidad, investigación y veredicto.
@@ -290,8 +299,11 @@ uv run pytest -m red     # contra las tiendas reales
 - El motor atiende búsquedas puntuales pedidas por una persona; no rastrea catálogos ni
   corre de forma programada. Por decisión del dueño del proyecto, no se guía por los
   `robots.txt` de las tiendas.
-- Una tienda que falla no tumba la búsqueda: queda reportada en la cobertura. Una
-  conexión que no alcanza a abrirse se reintenta una sola vez.
+- Una tienda que falla no tumba la búsqueda: queda reportada en la cobertura. Las
+  fallas de conexión llegan por ráfagas de unos segundos (en las pruebas no fallaron ni
+  264 conexiones ni 240 saludos TLS seguidos, así que no es algo permanente): una
+  conexión que no abre se reintenta de inmediato, y las tiendas que caen por la red se
+  vuelven a consultar una vez al final de la búsqueda.
 - Los certificados se validan contra el almacén del sistema operativo (`truststore`).
 - La configuración del buscador de Alkosto, Ktronix y Alkomprar se guarda 6 horas en
   `~/.cache/ofertas` (o en la carpeta que indique `OFERTAS_CACHE`), porque leerla

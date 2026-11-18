@@ -75,7 +75,11 @@ Reglas al responder:
 5. Si el texto avisa que todo el mercado local está inflado frente al exterior,
    menciónalo aunque la oferta sea la más barata.
 6. Para pedir solo lo que vale la pena: `--solo-reales --orden ahorro`.
-7. Cuando el usuario pregunte si una oferta concreta es real, usa
+7. Si un producto solo lo vende una tienda y quedó "sin verificar", repite con
+   `--archivo` o usa `verificar`: consultan copias antiguas de la página en el archivo
+   de Internet. Si hay copia, el veredicto dice cuánto valía y en qué fecha; cítalo así
+   ("en abril esta misma página mostraba $89.900").
+8. Cuando el usuario pregunte si una oferta concreta es real, usa
    `uv run ofertas verificar "<producto>" --json`: investiga más productos afuera y
    espera a las fuentes lentas. Tarda más (hasta un minuto si hay varios productos).
    Con `--navegador` suma Amazon como fuente internacional (abre Edge).

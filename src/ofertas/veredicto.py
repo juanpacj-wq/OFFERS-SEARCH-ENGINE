@@ -157,7 +157,7 @@ class Mercado:
 
 @dataclass
 class Evidencia:
-    tipo: str  # "mercado", "historial", "internacional", "ficha" o "categoria"
+    tipo: str  # "mercado", "archivo", "historial", "internacional", "ficha" o "categoria"
     precio: float
     detalle: str
     fuerza: str  # "fuerte", "media" o "aproximada"
@@ -201,6 +201,7 @@ def reunir_evidencias(
     internacional: Internacional | None = None,
     variantes: list[Oferta] | None = None,
     comparables: list[Oferta] | None = None,
+    archivo: list[dict] | None = None,
 ) -> list[Evidencia]:
     """Arma la lista de evidencias disponibles, de la más confiable a la menos."""
     evidencias: list[Evidencia] = []
@@ -237,6 +238,15 @@ def reunir_evidencias(
             "mercado", otra.precio,
             f"precio en {otra.tienda}, que vende la misma referencia (reconocida por el nombre)",
             "media", f"precio en {otra.tienda} de la misma referencia",
+        ))
+    if archivo:
+        # Copias antiguas de esta misma página en el archivo de Internet.
+        precios = [a["precio"] for a in archivo]
+        fechas = ", ".join(f"{_pesos(a['precio'])} el {a['fecha']}" for a in archivo)
+        evidencias.append(Evidencia(
+            "archivo", median(precios),
+            f"esta misma página mostraba {fechas}, según el archivo de Internet",
+            "media", f"lo que esta misma página mostraba el {archivo[-1]['fecha']}",
         ))
     if (
         historial
@@ -275,7 +285,7 @@ def reunir_evidencias(
             f"mediana de {len(precios)} equipos con la misma ficha técnica",
         ))
     orden = {"fuerte": 0, "media": 1, "aproximada": 2}
-    tipo = {"mercado": 0, "historial": 1, "internacional": 2, "ficha": 3}
+    tipo = {"mercado": 0, "archivo": 1, "historial": 2, "internacional": 3, "ficha": 4}
     # sorted es estable: entre dos evidencias de mercado de igual fuerza gana la primera.
     return sorted(evidencias, key=lambda e: (orden[e.fuerza], tipo[e.tipo]))
 
@@ -336,11 +346,12 @@ def evaluar(
     variantes: list[Oferta] | None = None,
     comparables: list[Oferta] | None = None,
     mercado: Mercado | None = None,
+    archivo: list[dict] | None = None,
 ) -> Veredicto:
     """Decide qué tan real es la oferta comparándola con el precio real estimado."""
     anunciado = oferta.descuento_pct
     evidencias = reunir_evidencias(
-        oferta, otras_tiendas, historial, internacional, variantes, comparables
+        oferta, otras_tiendas, historial, internacional, variantes, comparables, archivo
     )
     if not evidencias and mercado and anunciado >= DESCUENTO_ANUNCIADO_MINIMO:
         return _segun_el_mercado(oferta, mercado)
@@ -425,11 +436,12 @@ def evaluar(
             else " Sin confirmar: la referencia es un producto equivalente, no el idéntico."
         )
     elif principal.fuerza == "media" and len(evidencias) == 1:
-        texto += (
-            " La evidencia es limitada: confirma que sea la misma presentación."
-            if principal.tipo == "internacional"
-            else " La evidencia es limitada."
-        )
+        if principal.tipo == "internacional":
+            texto += " La evidencia es limitada: confirma que sea la misma presentación."
+        elif principal.tipo == "archivo":
+            texto += " La evidencia es limitada: es una copia antigua de la página."
+        else:
+            texto += " La evidencia es limitada."
 
     return Veredicto(
         clase=clase,

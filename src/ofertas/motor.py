@@ -36,6 +36,10 @@ TIEMPO_LIMITE = httpx.Timeout(12.0, connect=4.0)
 # Tope por tienda sumando todas sus peticiones (las de navegador tienen el suyo). Una
 # tienda más lenta que esto queda reportada como fallida en vez de frenar la búsqueda.
 TOPE_POR_TIENDA = 15.0
+# Las fallas de conexión llegan por ráfagas de unos segundos. Al terminar la búsqueda se
+# vuelve a intentar una vez con las tiendas que cayeron por la red, con este tope.
+TOPE_REINTENTO = 8.0
+FALLAS_DE_RED = ("no respondió a tiempo", "falla de red", "tardó demasiado")
 ORDENES = ("precio", "descuento")
 CONECTORES = {
     "vtex": vtex.buscar,
@@ -102,6 +106,7 @@ async def _buscar_en_tienda(
     limite: int,
     incluir_agotados: bool,
     filtrar: bool,
+    tope: float = TOPE_POR_TIENDA,
 ) -> tuple[list[Oferta], EstadoTienda]:
     inicio = time.perf_counter()
     try:
@@ -111,7 +116,7 @@ async def _buscar_en_tienda(
         if tienda.plataforma == "navegador":
             ofertas, recibidos, total = await conector
         else:
-            ofertas, recibidos, total = await asyncio.wait_for(conector, TOPE_POR_TIENDA)
+            ofertas, recibidos, total = await asyncio.wait_for(conector, tope)
     except TimeoutError:
         estado = EstadoTienda(
             tienda.id, tienda.nombre, ok=False, error="tardó demasiado en responder",
@@ -175,6 +180,26 @@ async def buscar(
                     for t in tiendas
                 )
             )
+            respuestas = list(respuestas)
+            caidas = [
+                i for i, (_, estado) in enumerate(respuestas)
+                if not estado.ok and tiendas[i].plataforma != "navegador"
+                and any(m in (estado.error or "") for m in FALLAS_DE_RED)
+            ]
+            if caidas:
+                segundas = await asyncio.gather(
+                    *(
+                        _buscar_en_tienda(
+                            cliente, tiendas[i], consulta, limite_por_tienda,
+                            incluir_agotados, filtrar, tope=TOPE_REINTENTO,
+                        )
+                        for i in caidas
+                    )
+                )
+                for i, segunda in zip(caidas, segundas, strict=True):
+                    if segunda[1].ok:
+                        segunda[1].segundos += respuestas[i][1].segundos
+                        respuestas[i] = segunda
     finally:
         await navegador.cerrar()
     ofertas = [o for lista, _ in respuestas for o in lista]

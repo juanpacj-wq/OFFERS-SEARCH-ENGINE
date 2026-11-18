@@ -171,3 +171,37 @@ def test_cli_valida_entradas(capsys):
 )
 def test_los_accesorios_de_lo_buscado_no_son_relevantes(nombre, consulta, relevante):
     assert motor.es_relevante(oferta(nombre), consulta) is relevante
+
+
+async def test_una_tienda_que_cae_por_la_red_se_reintenta_al_final():
+    intentos = {"a.example": 0, "b.example": 0}
+
+    def manejador(peticion):
+        intentos[peticion.url.host] += 1
+        if peticion.url.host == "a.example" and intentos["a.example"] <= 2:
+            raise httpx.ConnectError("ráfaga de red")
+        if peticion.url.host == "b.example":
+            raise httpx.ConnectError("caída de verdad")
+        return httpx.Response(200, json=CATALOGO["a.example"])
+
+    resultado = await motor.buscar(
+        "audifonos sony", [A, B], transporte=httpx.MockTransport(manejador)
+    )
+    # A falló dos veces (petición y su reintento inmediato) y respondió en la segunda vuelta.
+    assert [t.tienda_id for t in resultado.tiendas_consultadas] == ["a"]
+    assert len(resultado.ofertas) == 1
+    # B sigue caída: queda reportada, con cuatro intentos en total y no más.
+    assert resultado.tiendas_fallidas[0].tienda_id == "b"
+    assert intentos["b.example"] == 4
+
+
+async def test_un_rechazo_de_la_tienda_no_se_reintenta():
+    visitas = []
+
+    def manejador(peticion):
+        visitas.append(peticion.url.host)
+        return httpx.Response(403, text="Access Denied")
+
+    resultado = await motor.buscar("x", [C], transporte=httpx.MockTransport(manejador))
+    assert "403" in resultado.tiendas_fallidas[0].error
+    assert len(visitas) == 1
