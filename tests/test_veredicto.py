@@ -185,14 +185,14 @@ def test_una_sola_tienda_con_la_misma_referencia_es_evidencia_limitada():
     assert "evidencia es limitada" in juicio.texto
 
 
-def test_el_margen_de_importacion_es_mayor_para_confecciones_y_se_puede_configurar(monkeypatch):
+def test_el_margen_de_importacion_sale_del_arancel_y_se_puede_configurar(monkeypatch):
     monkeypatch.delenv("OFERTAS_MARGEN_IMPORTACION", raising=False)
-    assert veredicto.margen_para("Televisor Samsung 55") == 0.30
-    assert veredicto.margen_para("Camiseta Polo Hombre Manga Corta") == 0.55
-    assert veredicto.margen_para("Chaqueta Impermeable para Mujer") == 0.55
-    ropa = Internacional(precio_usd=100, trm=4000.0, coincidencia="modelo", margen=0.55)
-    assert ropa.tope_normal == pytest.approx(476000 * 1.55)
-    monkeypatch.setenv("OFERTAS_MARGEN_IMPORTACION", "0.2")
-    assert veredicto.margen_para("Televisor Samsung 55") == 0.2
+    assert veredicto.margen_con_arancel(None) == 0.30  # categoría desconocida
+    assert veredicto.margen_con_arancel(0.0) == 0.20  # portátiles: solo flete y margen
+    assert veredicto.margen_con_arancel(0.40) == 0.68  # confecciones
+    ropa = Internacional(precio_usd=100, trm=4000.0, coincidencia="modelo", margen=0.68)
+    assert ropa.tope_normal == pytest.approx(476000 * 1.68)
+    monkeypatch.setenv("OFERTAS_MARGEN_IMPORTACION", "0.25")
+    assert veredicto.margen_con_arancel(0.40) == 0.25
     monkeypatch.setenv("OFERTAS_MARGEN_IMPORTACION", "mucho")
-    assert veredicto.margen_para("Televisor Samsung 55") == 0.30
+    assert veredicto.margen_con_arancel(0.0) == 0.20

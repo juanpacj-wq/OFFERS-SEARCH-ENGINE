@@ -1,5 +1,6 @@
 """Investigación del precio internacional, con las fuentes simuladas."""
 
+import asyncio
 import time
 
 import httpx
@@ -373,8 +374,9 @@ async def test_lo_consultado_queda_en_cache_y_no_se_vuelve_a_pedir(conexion):
         referencias, _ = await internacional.investigar(c, conexion, [SILLA, TV])
     assert len(visitas) == primera
     assert referencias[id(SILLA)].precio_usd == 15.0
-    # A IKEA le basta su propia tienda: no se pregunta a Bing por la silla.
-    assert visitas.count("www.bing.com") == 1
+    # A IKEA le basta su propia tienda: no se pregunta a Bing por la silla. Para el
+    # televisor salen a la vez la consulta por modelo y la de familia.
+    assert visitas.count("www.bing.com") == 2
 
 
 async def test_upcitemdb_solo_en_modo_profundo_y_respetando_su_limite(conexion, sin_esperas):
@@ -446,3 +448,18 @@ async def test_sin_trm_no_hay_comparacion_internacional(conexion):
         referencias, avisos = await internacional.investigar(c, conexion, [S25])
     assert referencias == {}
     assert "TRM" in avisos[0]
+
+
+async def test_una_fuente_lenta_no_frena_la_busqueda_normal(conexion, monkeypatch):
+    monkeypatch.setattr(internacional, "ESPERA_NORMAL", 0.05)
+
+    async def lenta(cliente, grupo, consulta):
+        await asyncio.sleep(1)
+        return [candidato("Samsung UN55CU7000FXZA", 380)]
+
+    monkeypatch.setattr(internacional, "fuente_bing", lenta)
+    async with cliente(respuestas) as c:
+        inicio = time.perf_counter()
+        referencias, avisos = await internacional.investigar(c, conexion, [LG])
+    assert time.perf_counter() - inicio < 0.8
+    assert referencias == {} and avisos == []

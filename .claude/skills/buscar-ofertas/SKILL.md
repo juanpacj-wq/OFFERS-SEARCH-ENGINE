@@ -50,6 +50,12 @@ Clases:
   (`reales_en_la_busqueda` de `comprobadas_en_la_busqueda`), cítala como contexto: no
   es un veredicto sobre esa oferta, pero dice cuánto creerle a ese tipo de anuncio.
 
+Qué esperar por categoría: en productos con marca y modelo (celulares, portátiles,
+televisores, electrodomésticos, consolas) casi todo se puede comprobar. En productos
+genéricos o de marca local (colchones, sillas, bicicletas, morrales) casi nada, porque
+no existe el mismo producto en otra tienda ni afuera; ahí dilo sin rodeos y apóyate en
+el contexto de la búsqueda y en el historial.
+
 Reglas al responder:
 
 1. Nunca repitas el porcentaje que anuncia la tienda como si fuera el ahorro. Di el

@@ -8,7 +8,7 @@ import json
 import sys
 from dataclasses import asdict
 
-from ofertas import historial, identidad, motor, veredicto, verificacion
+from ofertas import aranceles, historial, identidad, motor, veredicto, verificacion
 from ofertas.conectores import navegador
 from ofertas.entorno import cargar_env
 from ofertas.modelos import Oferta, Resultado, Tienda, agrupar_por_ean
@@ -183,6 +183,13 @@ def _analizador() -> argparse.ArgumentParser:
         "revisar", help="Busca ahora todo lo que sigues y dice qué llegó a su precio objetivo."
     )
     revisar.add_argument("--json", action="store_true", help="Salida en JSON.")
+    tarifas = comandos.add_parser(
+        "aranceles", help="Muestra el arancel por categoría que usa el veredicto."
+    )
+    tarifas.add_argument(
+        "--actualizar", action="store_true",
+        help="Vuelve a consultar los aranceles en el Banco Mundial (WITS) y los guarda.",
+    )
     return analizador
 
 
@@ -297,6 +304,24 @@ def _verificar_a_fondo(args: argparse.Namespace) -> int:
         print(f"Aviso: {aviso}")
     if resultado.tiendas_fallidas:
         print("No respondieron: " + ", ".join(t.tienda for t in resultado.tiendas_fallidas))
+    return 0
+
+
+def _mostrar_aranceles(args: argparse.Namespace) -> int:
+    async def refrescar(conexion) -> list[dict]:
+        async with motor.crear_cliente() as cliente:
+            return await aranceles.actualizar(cliente, conexion)
+
+    with historial.abrir() as conexion:
+        if args.actualizar:
+            consultados = asyncio.run(refrescar(conexion))
+            sin_dato = [c["categoria"] for c in consultados if not c["actual"]]
+            print(f"Actualizados {len(consultados) - len(sin_dato)} de {len(consultados)}.")
+            if sin_dato:
+                print("Sin dato reciente (se conserva la tabla): " + ", ".join(sin_dato))
+        for categoria in aranceles.CATEGORIAS:
+            _, fuente = aranceles.arancel_de(categoria.palabras[0], conexion)
+            print(f"  {categoria.hs}  {fuente}")
     return 0
 
 
@@ -426,6 +451,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.comando == "historial":
         return _mostrar_historial(args)
+
+    if args.comando == "aranceles":
+        return _mostrar_aranceles(args)
 
     if args.comando == "verificar":
         if not args.consulta.strip():

@@ -44,9 +44,13 @@ En orden de confianza:
 3. **Historial propio:** el precio habitual del producto en esa tienda (3 observaciones
    en 7 días o más).
 4. **Precio internacional:** lo que cuesta afuera, convertido con la TRM oficial del
-   día, más el IVA (19%) y un margen de importación: hasta 30% en general y hasta 55%
-   en confecciones, que pagan 40% de arancel cuando no vienen de un país con TLC. Se
-   puede cambiar con la variable `OFERTAS_MARGEN_IMPORTACION` (por ejemplo `0.2`).
+   día, más el IVA (19%), el arancel de la categoría y hasta 20% por flete, seguro y
+   margen comercial. El arancel sale del Banco Mundial (WITS): 0% para portátiles,
+   celulares y herramientas eléctricas, 11% para televisores, 15% para calzado y
+   neveras, 40% para confecciones. `uv run ofertas aranceles` muestra las 31
+   categorías y `--actualizar` las vuelve a consultar. Si no se reconoce la categoría
+   se usa 30% en total. Todo el margen se puede fijar a mano con
+   `OFERTAS_MARGEN_IMPORTACION` (por ejemplo `0.2`).
 5. **Equipos de igual ficha técnica:** para computadores que solo vende una tienda y no
    tienen referencia afuera, la mediana de otros equipos con el mismo procesador,
    memoria y almacenamiento (3 tiendas o más). Es la evidencia más débil: el veredicto
@@ -105,8 +109,24 @@ importar el producto, y cuando una oferta está por debajo del precio internacio
 
 Lo consultado afuera se guarda 7 días en la base local. Una búsqueda normal investiga
 hasta 10 productos de los que se muestran, empezando por los que no tienen con qué
-compararse en Colombia, y tarda entre 5 y 10 segundos en total (casi todo es la
-búsqueda en las tiendas). `verificar` investiga hasta 12.
+compararse en Colombia, y tarda entre 5 y 10 segundos en total. A cada fuente de afuera
+se le esperan 3 segundos (12 en `verificar`); si demora más, se sigue sin ella. Una
+tienda que tarde más de 15 segundos queda reportada como fallida. `verificar` investiga
+hasta 12 productos.
+
+### Qué tanto comprueba, por categoría
+
+`docs/evaluacion-veredictos.md` tiene la corrida completa (se repite con
+`uv run python scripts/evaluar_veredictos.py`). En resumen, sobre las primeras 20
+ofertas de 15 búsquedas, sin historial previo:
+
+- **Productos con marca y modelo** (celulares, portátiles, televisores, neveras,
+  lavadoras, consolas): se comprueba entre 70% y 100% de las ofertas con descuento.
+- **Herramientas, calzado y perfumes:** entre 33% y 56%.
+- **Productos genéricos o de marca local** (colchones, sillas, bicicletas, morrales):
+  entre 0% y 16%. No existe "el mismo producto" en otra tienda ni afuera, así que no
+  hay evidencia independiente; ahí el motor dice "sin verificar" y da el contexto de
+  la búsqueda. El historial propio es lo único que los irá cubriendo.
 
 ### Límites que conviene conocer
 
@@ -116,7 +136,9 @@ búsqueda en las tiendas). `verificar` investiga hasta 12.
   mismo modelo ni un equivalente, queda "sin verificar". Pasa con marcas que solo se
   venden en Colombia y con productos sin ficha técnica comparable. Para portátiles de
   configuración regional conviene `verificar`, que busca equipos de igual ficha.
-- El margen de importación es una estimación, no el arancel exacto de cada producto.
+- El arancel es el promedio de nación más favorecida de la subpartida; una importación
+  concreta puede pagar menos por acuerdos comerciales. El 20% de flete y margen
+  comercial sí es una estimación.
 - Las constantes del juicio están en `src/ofertas/veredicto.py`.
 
 ## Historial de precios y seguimiento
@@ -237,6 +259,8 @@ Sin conectar, con el motivo comprobado el 2026-11-18 (`uv run ofertas tiendas` l
 - `src/ofertas/identidad.py`: reconoce el mismo producto entre tiendas.
 - `src/ofertas/veredicto.py`: decide si un descuento es real (lógica pura).
 - `src/ofertas/internacional.py`: investiga el precio en el exterior y la TRM.
+- `src/ofertas/aranceles.py`: arancel de Colombia por categoría (Banco Mundial, WITS).
+- `scripts/evaluar_veredictos.py`: mide qué tanto comprueba el veredicto por categoría.
 - `src/ofertas/verificacion.py`: une identidad, investigación y veredicto.
 - `src/ofertas/historial.py`: base SQLite con el historial de precios y la lista de
   seguimiento.

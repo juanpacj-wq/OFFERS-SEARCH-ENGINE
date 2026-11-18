@@ -15,8 +15,6 @@ El módulo es lógica pura: no consulta nada. Recibe la evidencia ya reunida.
 from __future__ import annotations
 
 import os
-import re
-import unicodedata
 from dataclasses import asdict, dataclass, field
 from statistics import median
 
@@ -39,36 +37,30 @@ MIN_OBSERVACIONES = 3
 MIN_DIAS = 7
 # Colombia cobra IVA y los precios publicados afuera no lo incluyen.
 IVA = 0.19
-# Sobrecosto razonable de traer y vender un producto en Colombia (flete, arancel,
-# margen del importador). El precio local se considera normal hasta este tope. Es una
-# estimación general: el arancel colombiano va de 0% a 40% según el producto y el origen.
-# Se puede cambiar con la variable de entorno OFERTAS_MARGEN_IMPORTACION (por ejemplo 0.2).
+# Sobrecosto razonable de traer y vender un producto en Colombia cuando no se reconoce
+# su categoría (flete, arancel y margen del importador juntos). Es una estimación.
 MARGEN_IMPORTACION = 0.30
-# Las confecciones pagan 40% de arancel cuando no vienen de un país con TLC (Decreto
-# 2598 de 2022), así que su sobrecosto razonable es mayor.
-MARGEN_CONFECCIONES = 0.55
-_CONFECCIONES = frozenset(
-    ["camiseta", "camisetas", "camisa", "camisas", "pantalon", "pantalones", "jean", "jeans",
-     "chaqueta", "chaquetas", "buzo", "buzos", "sudadera", "vestido", "vestidos", "blusa",
-     "blusas", "falda", "short", "shorts", "pantaloneta", "medias", "abrigo", "saco", "polo",
-     "bermuda", "leggings", "hoodie", "brasier", "boxer", "pijama"]
-)
+# Cuando sí se conoce el arancel de la categoría (ver aranceles.py), encima de él se
+# acepta este sobrecosto por flete, seguro y margen comercial. También es una estimación.
+LOGISTICA_Y_MARGEN = 0.20
 
 
-def margen_para(nombre: str) -> float:
-    """Sobrecosto de importación que se considera normal para un producto."""
+def margen_con_arancel(arancel: float | None) -> float:
+    """Sobrecosto de importación que se considera normal, dado el arancel del producto.
+
+    Se puede fijar a mano con la variable de entorno OFERTAS_MARGEN_IMPORTACION (0.2).
+    """
     configurado = os.environ.get("OFERTAS_MARGEN_IMPORTACION", "").strip()
     try:
         if configurado and 0 <= float(configurado) <= 2:
             return float(configurado)
     except ValueError:
         pass
-    plano = "".join(
-        c for c in unicodedata.normalize("NFKD", nombre.lower()) if not unicodedata.combining(c)
-    )
-    if _CONFECCIONES.intersection(re.findall(r"[a-z]+", plano)):
-        return MARGEN_CONFECCIONES
-    return MARGEN_IMPORTACION
+    if arancel is None:
+        return MARGEN_IMPORTACION
+    return round((1 + arancel) * (1 + LOGISTICA_Y_MARGEN) - 1, 4)
+
+
 # Si todo el mercado local supera el tope internacional por más de esto, se advierte.
 ALERTA_SOBRE_INTERNACIONAL = 0.15
 
@@ -118,6 +110,8 @@ class Internacional:
     candidatos: int = 1
     # Sobrecosto de importación que se acepta como normal para este producto.
     margen: float = MARGEN_IMPORTACION
+    # De dónde sale el arancel usado ("" si no se reconoció la categoría).
+    fuente_arancel: str = ""
 
     @property
     def en_pesos(self) -> float:
@@ -247,6 +241,7 @@ def reunir_evidencias(
             f" {_pesos(internacional.en_pesos)} a la TRM de {_pesos(internacional.trm)},"
             f" {_pesos(internacional.con_iva)} con IVA, y hasta"
             f" {_pesos(internacional.tope_normal)} con costos de importación"
+            f"{'; ' + internacional.fuente_arancel if internacional.fuente_arancel else ''}"
             f" ({', '.join(internacional.fuentes)})",
             _FUERZA_INTERNACIONAL[internacional.coincidencia],
             f"afuera vale US$ {internacional.precio_usd:,.2f}, que con IVA e importación"

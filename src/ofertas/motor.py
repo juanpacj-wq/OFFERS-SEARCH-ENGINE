@@ -31,10 +31,11 @@ AGENTE = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"
 )
-# Las páginas más pesadas (2 MB) llegan en unos 5 s; más de 20 s es una tienda caída.
-TIEMPO_LIMITE = httpx.Timeout(20.0, connect=8.0)
-# Tope por tienda sumando todas sus peticiones (las de navegador tienen el suyo).
-TOPE_POR_TIENDA = 30.0
+# Las páginas más pesadas (2 MB) llegan en unos 5 s; más de 12 s es una tienda caída.
+TIEMPO_LIMITE = httpx.Timeout(12.0, connect=4.0)
+# Tope por tienda sumando todas sus peticiones (las de navegador tienen el suyo). Una
+# tienda más lenta que esto queda reportada como fallida en vez de frenar la búsqueda.
+TOPE_POR_TIENDA = 15.0
 ORDENES = ("precio", "descuento")
 CONECTORES = {
     "vtex": vtex.buscar,

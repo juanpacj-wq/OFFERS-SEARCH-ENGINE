@@ -163,6 +163,7 @@ async def verificar(
                     "con_iva": round(referencia.con_iva),
                     "tope_normal": round(referencia.tope_normal),
                     "margen_importacion": referencia.margen,
+                    "arancel": referencia.fuente_arancel,
                     "coincidencia": referencia.coincidencia,
                     "ejemplo": referencia.ejemplo,
                     "url": referencia.url,

@@ -28,10 +28,10 @@ from urllib.parse import quote
 
 import httpx
 
-from ofertas import identidad
+from ofertas import aranceles, identidad
 from ofertas.conectores.base import ErrorTienda, a_numero, leer_json, pedir
 from ofertas.identidad import Grupo
-from ofertas.veredicto import IVA, Internacional, margen_para
+from ofertas.veredicto import IVA, Internacional, margen_con_arancel
 
 VIGENCIA_CACHE = timedelta(days=7)
 # UPCitemdb (plan gratuito) rechaza consultas seguidas: hay que espaciarlas.
@@ -40,6 +40,10 @@ PAUSA_UPC_SEGUNDOS = 13
 VIGENCIA_OFERTA_UPC = timedelta(days=540)
 # El precio de afuera (con IVA) debe parecerse al local; si no, es otro producto.
 RAZON_MINIMA, RAZON_MAXIMA = 0.35, 2.5
+# Cuánto se espera a cada fuente. En una búsqueda normal una fuente lenta no debe
+# frenar el resultado: se sigue sin ella. En modo profundo se le da más tiempo.
+ESPERA_NORMAL = 3.0
+ESPERA_PROFUNDA = 12.0
 COBERTURA_MINIMA = 0.6
 # Palabras del nombre (sin la marca) que deben coincidir para llamarlo equivalente.
 MIN_PALABRAS_COMUNES = 2
@@ -131,9 +135,10 @@ async def obtener_trm(cliente: httpx.AsyncClient, conexion: sqlite3.Connection) 
         return guardada["valor"]
     valor = None
     try:
-        filas = leer_json(await pedir(cliente, URL_TRM))
+        # La fuente oficial a veces tarda varios segundos: si demora, se usa el respaldo.
+        filas = leer_json(await asyncio.wait_for(pedir(cliente, URL_TRM), ESPERA_NORMAL))
         valor = a_numero(filas[0]["valor"]) if filas else None
-    except (ErrorTienda, KeyError, IndexError, TypeError):
+    except (ErrorTienda, TimeoutError, KeyError, IndexError, TypeError):
         pass
     if not valor:
         try:
@@ -307,7 +312,12 @@ def _misma_configuracion(local: str, afuera: str) -> bool:
     return not (cpu_local and cpu_afuera) or cpu_local == cpu_afuera
 
 
-def resumir(grupo: Grupo, candidatos: list[dict], trm: float) -> Internacional | None:
+def resumir(
+    grupo: Grupo,
+    candidatos: list[dict],
+    trm: float,
+    conexion: sqlite3.Connection | None = None,
+) -> Internacional | None:
     """Convierte los candidatos válidos en una referencia: la mediana de los más seguros."""
     calificados = []
     vocabulario = vocabulario_de(candidatos)
@@ -324,9 +334,11 @@ def resumir(grupo: Grupo, candidatos: list[dict], trm: float) -> Internacional |
         # Entre equivalentes solo cuentan los que mejor coinciden con el nombre.
         tope = -calificados[0][1]
         elegidos = [c[3] for c in calificados if c[2] == mejor_clase and -c[1] >= tope - 0.15]
+    arancel = aranceles.arancel_de(grupo.principal.nombre, conexion)
     return Internacional(
         precio_usd=round(median(a_numero(c["precio_usd"]) for c in elegidos), 2),
-        margen=margen_para(grupo.principal.nombre),
+        margen=margen_con_arancel(arancel[0] if arancel else None),
+        fuente_arancel=arancel[1] if arancel else "",
         trm=trm,
         coincidencia=mejor_clase,
         fuentes=sorted({c["fuente"] for c in elegidos}),
@@ -462,17 +474,19 @@ async def fuente_bing(cliente: httpx.AsyncClient, grupo: Grupo, consulta: str) -
 
 
 async def _bing(
-    cliente: httpx.AsyncClient, conexion: sqlite3.Connection, grupo: Grupo, trm: float
+    cliente: httpx.AsyncClient, conexion: sqlite3.Connection, grupo: Grupo, espera: float
 ) -> tuple[list[dict], str | None]:
-    """Prueba las consultas generales en orden y se queda con la primera que sirva."""
-    candidatos: list[dict] = []
-    aviso = None
-    for consulta in consultas_generales(grupo):
-        hallados, aviso = await _consultar(cliente, conexion, "bing", fuente_bing, grupo, consulta)
-        candidatos += hallados
-        vocabulario = vocabulario_de(hallados)
-        if any(calificar(grupo, c, trm, vocabulario) for c in hallados):
-            break
+    """Lanza a la vez la consulta por modelo y la de familia, y junta lo que traigan.
+
+    Se hacen en paralelo y no una tras otra: esperar a que la primera falle para probar
+    la segunda duplicaba el tiempo justo en los productos más difíciles de encontrar.
+    """
+    respuestas = await asyncio.gather(
+        *(_consultar(cliente, conexion, "bing", fuente_bing, grupo, consulta, espera)
+          for consulta in consultas_generales(grupo))
+    )
+    candidatos = [c for hallados, _ in respuestas for c in hallados]
+    aviso = next((a for _, a in respuestas if a), None)
     return candidatos, aviso
 
 
@@ -486,14 +500,21 @@ async def _consultar(
     fuente,
     grupo: Grupo,
     consulta: str,
+    espera: float = ESPERA_PROFUNDA,
 ) -> tuple[list[dict], str | None]:
-    """Corre una fuente con caché. Devuelve los candidatos y, si falló, el motivo."""
+    """Corre una fuente con caché. Devuelve los candidatos y, si falló, el motivo.
+
+    Si la fuente no responde dentro de `espera`, se sigue sin ella y sin aviso: es una
+    demora, no una falla, y la próxima búsqueda la vuelve a intentar.
+    """
     clave = consulta if nombre != "ikea" else " ".join(sorted(grupo.modelos))
     guardados = _leer_cache(conexion, nombre, clave)
     if guardados is not None:
         return guardados, None
     try:
-        candidatos = await fuente(cliente, grupo, consulta)
+        candidatos = await asyncio.wait_for(fuente(cliente, grupo, consulta), espera)
+    except TimeoutError:
+        return [], None
     except ErrorTienda as exc:
         return [], f"{nombre}: {exc}"
     except Exception as exc:
@@ -553,6 +574,7 @@ async def investigar(
     referencias: dict[int, Internacional] = {}
     avisos: list[str] = []
     pendientes_upc: list[tuple[Grupo, str, list[dict]]] = []
+    espera = ESPERA_PROFUNDA if profundo else ESPERA_NORMAL
 
     async def de_marca(grupo: Grupo) -> tuple[Grupo, str, list[dict]]:
         consulta = consulta_para(grupo)
@@ -562,7 +584,7 @@ async def investigar(
         if fuente:
             consultas = [consulta] if grupo.marca == "ikea" else [por_modelo, consulta]
             for hallados, aviso in await asyncio.gather(
-                *(_consultar(cliente, conexion, grupo.marca, fuente, grupo, c)
+                *(_consultar(cliente, conexion, grupo.marca, fuente, grupo, c, espera)
                   for c in consultas if c)
             ):
                 candidatos += hallados
@@ -572,16 +594,16 @@ async def investigar(
             # Sin tienda de marca, lo más preciso para los comercios es el modelo.
             consulta = por_modelo
         # Si la tienda de la marca ya dio el mismo producto, no hace falta preguntar más.
-        previa = resumir(grupo, candidatos, trm)
+        previa = resumir(grupo, candidatos, trm, conexion)
         if not (previa and previa.confiable):
-            hallados, aviso = await _bing(cliente, conexion, grupo, trm)
+            hallados, aviso = await _bing(cliente, conexion, grupo, espera)
             candidatos += hallados
             if aviso and aviso not in avisos:
                 avisos.append(aviso)
         return grupo, consulta, candidatos
 
     for grupo, consulta, candidatos in await asyncio.gather(*(de_marca(g) for g in grupos)):
-        referencia = resumir(grupo, candidatos, trm)
+        referencia = resumir(grupo, candidatos, trm, conexion)
         if referencia:
             referencias[id(grupo)] = referencia
         if profundo and not (referencia and referencia.confiable):
@@ -592,7 +614,7 @@ async def investigar(
         hallados, aviso = await _upc_con_pausa(cliente, conexion, grupo, consulta, True)
         if aviso and aviso not in avisos:
             avisos.append(aviso)
-        referencia = resumir(grupo, candidatos + hallados, trm)
+        referencia = resumir(grupo, candidatos + hallados, trm, conexion)
         if referencia:
             referencias[id(grupo)] = referencia
     return referencias, avisos
