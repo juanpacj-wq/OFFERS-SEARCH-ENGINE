@@ -169,7 +169,56 @@ async def verificar(
                     "fuentes": referencia.fuentes,
                 }
             oferta.veredicto = datos
+    _agregar_contexto(resultado.ofertas)
     return grupos, avisos
+
+
+# Ofertas comprobadas que hacen falta para hablar de una proporción.
+MIN_PARA_PROPORCION = 5
+
+
+def proporcion_de_reales(ofertas: list[Oferta]) -> tuple[int, int] | None:
+    """Cuántas de las ofertas con descuento anunciado que sí se comprobaron eran reales.
+
+    Solo cuentan las comprobadas con evidencia firme (no aproximada). Devuelve
+    (reales, comprobadas), o None si son muy pocas para decir algo.
+    """
+    comprobadas = [
+        o.veredicto for o in ofertas
+        if o.veredicto
+        and o.descuento_pct >= veredicto.DESCUENTO_ANUNCIADO_MINIMO
+        and o.veredicto["clase"] != "sin_referencia"
+        and o.veredicto["confianza"] != "aproximada"
+    ]
+    if len(comprobadas) < MIN_PARA_PROPORCION:
+        return None
+    reales = sum(1 for v in comprobadas if v["clase"] == "descuento_real")
+    return reales, len(comprobadas)
+
+
+def _agregar_contexto(ofertas: list[Oferta]) -> None:
+    """A lo que no se pudo comprobar le suma cómo salieron las ofertas que sí se comprobaron.
+
+    No es un veredicto sobre esa oferta: es el contexto para decidir cuánto creerle a un
+    descuento que nadie más permite verificar.
+    """
+    proporcion = proporcion_de_reales(ofertas)
+    if proporcion is None:
+        return
+    reales, comprobadas = proporcion
+    frase = (
+        f" Como referencia: en esta búsqueda, de {comprobadas} ofertas con descuento anunciado"
+        f" que sí se pudieron comprobar, {reales} eran descuentos reales."
+    )
+    for oferta in ofertas:
+        juicio = oferta.veredicto
+        if not juicio:
+            continue
+        juicio["comprobadas_en_la_busqueda"] = comprobadas
+        juicio["reales_en_la_busqueda"] = reales
+        anuncia = oferta.descuento_pct >= veredicto.DESCUENTO_ANUNCIADO_MINIMO
+        if juicio["clase"] == "sin_referencia" and anuncia:
+            juicio["texto"] += frase
 
 
 async def _buscar_por_ficha(

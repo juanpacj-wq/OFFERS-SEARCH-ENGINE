@@ -159,3 +159,35 @@ def test_comando_verificar_informa_por_producto(mundo, capsys):
     assert len(datos["productos"]) == 2
     assert len(datos["productos"][0]["ofertas"]) == 3  # primero el que tienen más tiendas
     assert main(["verificar", "  "]) == 2
+
+
+def test_lo_no_comprobable_trae_la_proporcion_de_reales_de_la_busqueda():
+    from ofertas import verificacion
+    from ofertas.modelos import Oferta
+
+    def con_veredicto(clase, confianza="fuerte", lista=200.0):
+        oferta = Oferta("t", "T", "Producto", "M", 100.0, lista, "https://t/p")
+        oferta.veredicto = {"clase": clase, "confianza": confianza, "texto": "Base."}
+        return oferta
+
+    comprobadas = [con_veredicto("oferta_falsa") for _ in range(4)]
+    comprobadas += [con_veredicto("descuento_real"), con_veredicto("sobreprecio")]
+    aproximada = con_veredicto("descuento_real", "aproximada")  # no cuenta: no es firme
+    sin_descuento = con_veredicto("buen_precio", lista=100.0)  # no anuncia descuento
+    dudosa = con_veredicto("sin_referencia", "")
+    todas = [*comprobadas, aproximada, sin_descuento, dudosa]
+
+    assert verificacion.proporcion_de_reales(todas) == (1, 6)
+    verificacion._agregar_contexto(todas)
+    assert dudosa.veredicto["texto"].endswith(
+        "de 6 ofertas con descuento anunciado que sí se pudieron comprobar,"
+        " 1 eran descuentos reales."
+    )
+    assert comprobadas[0].veredicto["texto"] == "Base."
+    assert dudosa.veredicto["reales_en_la_busqueda"] == 1
+
+    # Con muy pocas comprobadas no se habla de proporciones.
+    pocas = [con_veredicto("oferta_falsa"), con_veredicto("sin_referencia", "")]
+    assert verificacion.proporcion_de_reales(pocas) is None
+    verificacion._agregar_contexto(pocas)
+    assert pocas[1].veredicto["texto"] == "Base."

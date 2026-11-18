@@ -82,6 +82,10 @@ En orden de confianza:
 | Buen precio, Precio normal, Caro | Lo mismo para ofertas que no anuncian descuento |
 | Sin verificar | No hay evidencia independiente; se dice expresamente |
 
+Cuando una oferta no se puede comprobar, el texto agrega cómo salieron las que sí se
+comprobaron en esa misma búsqueda ("de 12 ofertas comprobadas, 1 era un descuento
+real"): no es un veredicto sobre esa oferta, pero dice cuánto creerle al anuncio.
+
 Además avisa cuando todo el mercado local está por encima de lo que se explica por
 importar el producto, y cuando una oferta está por debajo del precio internacional.
 

@@ -45,7 +45,10 @@ Clases:
 - `oferta_falsa`: adviértelo sin rodeos. El precio es el normal; el "antes" está inflado.
 - `sobreprecio`: aun con el descuento anunciado, está más caro que lo normal.
 - `buen_precio`, `precio_normal`, `caro`: para ofertas sin descuento anunciado.
-- `sin_referencia`: no se pudo comprobar. Dilo así; no la presentes como oferta.
+- `sin_referencia`: no se pudo comprobar. Dilo así; no la presentes como oferta. Si el
+  texto trae la proporción de descuentos reales de la búsqueda
+  (`reales_en_la_busqueda` de `comprobadas_en_la_busqueda`), cítala como contexto: no
+  es un veredicto sobre esa oferta, pero dice cuánto creerle a ese tipo de anuncio.
 
 Reglas al responder:
 
