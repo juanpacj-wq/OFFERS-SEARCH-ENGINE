@@ -17,6 +17,26 @@ uv run ofertas tiendas
 Si `uv sync` falla con un error de certificado (`UnknownIssuer`), usa
 `uv sync --system-certs`: pasa en redes corporativas que inspeccionan el tráfico.
 
+## Historial de precios y seguimiento
+
+Cada búsqueda guarda el precio de cada producto en una base local
+(`datos/historial.db`, fuera del repositorio). Desde la segunda vez que aparece un
+producto, el resultado dice si es el precio más bajo registrado, cuánto cambió frente a
+la vez anterior y, con suficiente historial (3 observaciones en 7 días o más), si el
+precio de lista que anuncia la tienda se llegó a ver o si el descuento es dudoso.
+
+```
+uv run ofertas historial "arroz diana"                 # precios guardados
+uv run ofertas seguir "televisor samsung 55" --objetivo 1500000 --tiendas alkosto,exito
+uv run ofertas seguimientos                            # lista de seguimiento
+uv run ofertas revisar                                 # busca ahora todo lo que sigues
+uv run ofertas dejar 1                                 # deja de seguir la número 1
+uv run ofertas buscar "morral" --sin-historial         # sin leer ni guardar historial
+```
+
+El historial solo crece con las búsquedas que tú pides. `ofertas revisar` también se
+corre a mano: el motor no consulta las tiendas por su cuenta ni de forma programada.
+
 ## Qué devuelve
 
 - Ofertas ordenadas por precio (o por descuento), con precio de lista, porcentaje de
@@ -106,6 +126,8 @@ Sin conectar, con el motivo comprobado el 2026-11-18 (`uv run ofertas tiendas` l
 - `src/ofertas/modelos.py`: modelo común (`Oferta`, `Resultado`) y emparejamiento por EAN.
 - `src/ofertas/conectores/`: un conector por plataforma (`vtex`, `falabella`, `alkosto`,
   `lenovo`, `hp`, `samsung`, `rappi`, `woocommerce`, `ikea`, `mercadolibre`) y utilidades comunes en `base.py`.
+- `src/ofertas/historial.py`: base SQLite con el historial de precios y la lista de
+  seguimiento.
 - `src/ofertas/motor.py`: consulta en paralelo, filtro de relevancia y orden.
 - `src/ofertas/cli.py`: comando `ofertas`.
 - `.claude/skills/buscar-ofertas/`: instrucciones para Claude Code.

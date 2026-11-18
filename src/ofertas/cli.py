@@ -6,11 +6,12 @@ import argparse
 import asyncio
 import json
 import sys
+from dataclasses import asdict
 
-from ofertas import motor
+from ofertas import historial, motor
 from ofertas.conectores import navegador
 from ofertas.entorno import cargar_env
-from ofertas.modelos import Resultado, agrupar_por_ean
+from ofertas.modelos import Oferta, Resultado, Tienda, agrupar_por_ean
 from ofertas.tiendas import PENDIENTES, TIENDAS, seleccionar
 
 
@@ -49,6 +50,12 @@ def presentar(resultado: Resultado, maximo: int) -> str:
                 else ""
             )
             lineas.append(f"{'':>12}  {o.url}{tarjeta}")
+            if o.historial:
+                veces = o.historial["veces_visto"]
+                lineas.append(
+                    f"{'':>12}  Historial (visto {veces} {'vez' if veces == 1 else 'veces'}"
+                    f" desde {o.historial['primera_vez']}): {o.historial['lectura']}"
+                )
 
     grupos = agrupar_por_ean(resultado.ofertas)
     if grupos:
@@ -107,6 +114,10 @@ def _analizador() -> argparse.ArgumentParser:
         "--navegador", action="store_true",
         help="Incluye las tiendas que abren una ventana de Edge (Amazon, Dafiti, Decathlon).",
     )
+    buscar.add_argument(
+        "--sin-historial", action="store_true",
+        help="No consulta ni guarda el historial de precios en esta búsqueda.",
+    )
 
     comandos.add_parser("tiendas", help="Lista las tiendas disponibles.")
     verificar = comandos.add_parser(
@@ -114,7 +125,139 @@ def _analizador() -> argparse.ArgumentParser:
         help="Abre una tienda en Edge para resolver a mano una verificación.",
     )
     verificar.add_argument("tienda", help="Identificador de la tienda, por ejemplo amazon.")
+
+    ver = comandos.add_parser(
+        "historial", help="Muestra los precios guardados de los productos que coincidan."
+    )
+    ver.add_argument("texto", help='Palabras del nombre, por ejemplo "arroz diana".')
+    ver.add_argument("--max", type=int, default=10, help="Productos a mostrar (10).")
+    ver.add_argument("--json", action="store_true", help="Salida en JSON.")
+
+    seguir = comandos.add_parser("seguir", help="Agrega una búsqueda a la lista de seguimiento.")
+    seguir.add_argument("consulta", help="La búsqueda que quieres seguir.")
+    seguir.add_argument("--objetivo", type=float, help="Precio al que te interesa comprar.")
+    seguir.add_argument("--tiendas", help="Tiendas a revisar, separadas por comas.")
+
+    lista = comandos.add_parser("seguimientos", help="Muestra la lista de seguimiento.")
+    lista.add_argument("--json", action="store_true", help="Salida en JSON.")
+    dejar = comandos.add_parser("dejar", help="Quita una búsqueda de la lista de seguimiento.")
+    dejar.add_argument("id", type=int, help="Número que muestra `ofertas seguimientos`.")
+    revisar = comandos.add_parser(
+        "revisar", help="Busca ahora todo lo que sigues y dice qué llegó a su precio objetivo."
+    )
+    revisar.add_argument("--json", action="store_true", help="Salida en JSON.")
     return analizador
+
+
+def _lista_de_tiendas(texto: str | None) -> list[str] | None:
+    return [t.strip() for t in texto.split(",") if t.strip()] if texto else None
+
+
+def _buscar_con_historial(
+    consulta: str, tiendas: list[Tienda], usar_historial: bool = True, **opciones
+) -> Resultado:
+    """Busca, anota lo que el historial sabía y guarda las observaciones nuevas."""
+    resultado = asyncio.run(motor.buscar(consulta, tiendas, **opciones))
+    if usar_historial:
+        try:
+            with historial.abrir() as conexion:
+                historial.anotar(conexion, resultado)
+                historial.registrar(conexion, resultado)
+        except Exception as exc:
+            # El historial es un complemento: si falla, la búsqueda sigue siendo válida.
+            print(f"Aviso: no se pudo usar el historial ({exc}).", file=sys.stderr)
+    return resultado
+
+
+def _mostrar_historial(args: argparse.Namespace) -> int:
+    with historial.abrir() as conexion:
+        productos = historial.buscar_productos(conexion, args.texto, args.max)
+    if args.json:
+        print(json.dumps(productos, ensure_ascii=False, indent=2))
+        return 0
+    if not productos:
+        print(f'No hay precios guardados para "{args.texto}".')
+        return 0
+    for p in productos:
+        print(f"{p['tienda']}: {_recortar(p['nombre'], 80)}")
+        print(f"  {p['url']}")
+        print(
+            f"  Visto {p['veces']} {'vez' if p['veces'] == 1 else 'veces'} entre"
+            f" {historial.fecha_local(p['primera'])} y {historial.fecha_local(p['ultima'])};"
+            f" mínimo {pesos(p['minimo'])}, máximo {pesos(p['maximo'])}"
+        )
+        for o in p["observaciones"][-8:]:
+            rebajado = o["precio_lista"] > o["precio"]
+            lista = f"  (lista {pesos(o['precio_lista'])})" if rebajado else ""
+            cuando = historial.fecha_local(o["fecha"], con_hora=True)
+            print(f"    {cuando}  {pesos(o['precio']):>12}{lista}")
+    return 0
+
+
+def _estado_de(seguimiento: historial.Seguimiento, mejor: Oferta | None) -> dict:
+    """Compara el mejor precio de ahora con el objetivo y con la revisión anterior."""
+    estado = {
+        "id": seguimiento.id,
+        "consulta": seguimiento.consulta,
+        "precio_objetivo": seguimiento.precio_objetivo,
+        "precio_anterior": seguimiento.ultimo_precio,
+        "mejor": mejor.a_dict() if mejor else None,
+        "llego_al_objetivo": bool(
+            mejor
+            and seguimiento.precio_objetivo is not None
+            and mejor.precio <= seguimiento.precio_objetivo
+        ),
+        "cambio_pct": None,
+    }
+    if mejor and seguimiento.ultimo_precio:
+        estado["cambio_pct"] = round(
+            (mejor.precio - seguimiento.ultimo_precio) / seguimiento.ultimo_precio * 100, 1
+        )
+    return estado
+
+
+def _revisar(args: argparse.Namespace) -> int:
+    with historial.abrir() as conexion:
+        pendientes = historial.seguimientos(conexion)
+    if not pendientes:
+        print('No sigues ninguna búsqueda. Agrega una con `ofertas seguir "..."`.')
+        return 0
+    estados = []
+    for seguimiento in pendientes:
+        try:
+            tiendas = seleccionar(seguimiento.tiendas or None)
+        except ValueError as exc:
+            print(f"Seguimiento {seguimiento.id}: {exc}", file=sys.stderr)
+            continue
+        resultado = _buscar_con_historial(seguimiento.consulta, tiendas)
+        mejor = resultado.ofertas[0] if resultado.ofertas else None
+        estado = _estado_de(seguimiento, mejor)
+        estado["tiendas_fallidas"] = [t.tienda for t in resultado.tiendas_fallidas]
+        estados.append(estado)
+        with historial.abrir() as conexion:
+            historial.anotar_revision(conexion, seguimiento, mejor)
+    if args.json:
+        print(json.dumps(estados, ensure_ascii=False, indent=2))
+        return 0
+    for e in estados:
+        objetivo = f" (objetivo {pesos(e['precio_objetivo'])})" if e["precio_objetivo"] else ""
+        print(f"[{e['id']}] {e['consulta']}{objetivo}")
+        if not e["mejor"]:
+            print("    Sin ofertas en esta revisión.")
+        else:
+            m = e["mejor"]
+            marca = "  ¡LLEGÓ AL OBJETIVO!" if e["llego_al_objetivo"] else ""
+            print(f"    {pesos(m['precio'])} en {m['tienda']}: {_recortar(m['nombre'], 60)}{marca}")
+            print(f"    {m['url']}")
+            if e["cambio_pct"]:
+                verbo = "bajó" if e["cambio_pct"] < 0 else "subió"
+                print(
+                    f"    {verbo} {abs(e['cambio_pct'])}% frente a"
+                    f" {pesos(e['precio_anterior'])} de la revisión anterior"
+                )
+        if e["tiendas_fallidas"]:
+            print(f"    No respondieron: {', '.join(e['tiendas_fallidas'])}")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -150,32 +293,79 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         return 0
 
+    if args.comando == "historial":
+        return _mostrar_historial(args)
+
+    if args.comando == "seguimientos":
+        with historial.abrir() as conexion:
+            lista = historial.seguimientos(conexion)
+        if args.json:
+            print(json.dumps([asdict(s) for s in lista], ensure_ascii=False, indent=2))
+        elif not lista:
+            print('No sigues ninguna búsqueda. Agrega una con `ofertas seguir "..."`.')
+        for s in [] if args.json else lista:
+            objetivo = f", objetivo {pesos(s.precio_objetivo)}" if s.precio_objetivo else ""
+            donde = f", en {', '.join(s.tiendas)}" if s.tiendas else ""
+            ultimo = (
+                f"; última revisión {historial.fecha_local(s.ultima_revision)}:"
+                f" {pesos(s.ultimo_precio)}"
+                f" en {s.ultima_tienda}"
+                if s.ultimo_precio
+                else "; sin revisar todavía"
+            )
+            print(f"[{s.id}] {s.consulta}{objetivo}{donde}{ultimo}")
+        return 0
+
+    if args.comando == "dejar":
+        with historial.abrir() as conexion:
+            quitado = historial.dejar_de_seguir(conexion, args.id)
+        print("Listo, ya no la sigues." if quitado else f"No hay un seguimiento número {args.id}.")
+        return 0 if quitado else 2
+
+    if args.comando == "revisar":
+        return _revisar(args)
+
     if not args.consulta.strip():
         print("La consulta no puede estar vacía.", file=sys.stderr)
         return 2
+
+    if args.comando == "seguir":
+        if args.objetivo is not None and args.objetivo <= 0:
+            print("--objetivo debe ser mayor que cero.", file=sys.stderr)
+            return 2
+        nombres = _lista_de_tiendas(args.tiendas)
+        try:
+            seleccionar(nombres)
+        except ValueError as exc:
+            print(exc, file=sys.stderr)
+            return 2
+        with historial.abrir() as conexion:
+            nuevo = historial.seguir(conexion, args.consulta, nombres, args.objetivo)
+        print(
+            f'Listo: sigo "{nuevo.consulta}" con el número {nuevo.id}.'
+            " Revísala con `ofertas revisar`."
+        )
+        return 0
+
     if args.max < 1 or args.por_tienda < 1:
         print("--max y --por-tienda deben ser mayores que cero.", file=sys.stderr)
         return 2
     try:
-        tiendas = seleccionar(
-            [t.strip() for t in args.tiendas.split(",") if t.strip()] if args.tiendas else None,
-            con_navegador=args.navegador,
-        )
+        tiendas = seleccionar(_lista_de_tiendas(args.tiendas), con_navegador=args.navegador)
     except ValueError as exc:
         print(exc, file=sys.stderr)
         return 2
 
-    resultado = asyncio.run(
-        motor.buscar(
-            args.consulta.strip(),
-            tiendas,
-            limite_por_tienda=args.por_tienda,
-            incluir_agotados=args.agotados,
-            filtrar=not args.sin_filtro,
-            descuento_minimo=args.descuento_min,
-            precio_maximo=args.precio_max,
-            orden=args.orden,
-        )
+    resultado = _buscar_con_historial(
+        args.consulta.strip(),
+        tiendas,
+        usar_historial=not args.sin_historial,
+        limite_por_tienda=args.por_tienda,
+        incluir_agotados=args.agotados,
+        filtrar=not args.sin_filtro,
+        descuento_minimo=args.descuento_min,
+        precio_maximo=args.precio_max,
+        orden=args.orden,
     )
     if args.json:
         datos = resultado.a_dict()

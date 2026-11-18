@@ -43,6 +43,9 @@ class Oferta:
     # Categoría según la tienda. Cuenta para la relevancia: en una tienda de marca el
     # nombre es "ThinkPad E14" y la palabra "portátil" solo está en la categoría.
     categoria: str = ""
+    # Lo que el historial local sabía de este producto antes de esta búsqueda
+    # (None si es la primera vez que se ve). Lo llena `historial.anotar`.
+    historial: dict | None = None
 
     @property
     def descuento_pct(self) -> float:

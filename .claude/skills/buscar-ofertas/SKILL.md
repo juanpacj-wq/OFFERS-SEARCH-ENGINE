@@ -26,6 +26,30 @@ Opciones útiles:
 - `--sin-filtro`: no exige que el nombre contenga todas las palabras buscadas.
 - `--agotados`: incluye productos sin existencias.
 
+## Historial de precios
+
+Cada oferta puede traer un campo `historial` con lo que se sabía de ese producto antes
+de esta búsqueda: `veces_visto`, `minimo_visto`, `maximo_visto`, `precio_anterior` y una
+`lectura` ya redactada. Si viene en `null`, es la primera vez que se ve.
+
+- Úsalo para decir si la oferta es real: "es el precio más bajo que he registrado" o
+  "la semana pasada estaba más barato".
+- Si la lectura dice "descuento dudoso", adviértelo: la tienda anuncia un precio de
+  lista que nunca se observó.
+- Con pocas observaciones no saques conclusiones; di desde cuándo hay datos.
+- `uv run ofertas historial "<palabras>" --json` muestra los precios guardados.
+
+## Lista de seguimiento
+
+- `uv run ofertas seguir "<consulta>" --objetivo <precio> --tiendas a,b`: agrega una
+  búsqueda cuando el usuario diga que quiere esperar a que algo baje.
+- `uv run ofertas revisar --json`: busca ahora todo lo seguido y marca
+  `llego_al_objetivo`. Córrelo cuando el usuario pregunte por lo que sigue.
+- `uv run ofertas seguimientos --json` y `uv run ofertas dejar <id>`.
+
+No programes revisiones automáticas (tareas, cron, bucles): las revisiones se hacen
+cuando el usuario las pide.
+
 ## Cómo armar la consulta
 
 - Usa pocas palabras y concretas: producto, marca y modelo ("morral totto", "aceite premier
