@@ -45,7 +45,12 @@ async def pedir(
 ) -> httpx.Response:
     """Hace la petición y traduce cualquier falla a un `ErrorTienda` con el motivo."""
     try:
-        respuesta = await cliente.request(metodo, url, **opciones)
+        try:
+            respuesta = await cliente.request(metodo, url, **opciones)
+        except (httpx.ConnectTimeout, httpx.ConnectError):
+            # Una conexión que no alcanza a abrirse suele ser un tropiezo de la red: se
+            # intenta una vez más. No se reintenta si el servidor ya respondió algo.
+            respuesta = await cliente.request(metodo, url, **opciones)
     except httpx.TimeoutException as exc:
         raise ErrorTienda("no respondió a tiempo") from exc
     except httpx.HTTPError as exc:

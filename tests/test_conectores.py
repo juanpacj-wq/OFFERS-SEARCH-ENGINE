@@ -550,3 +550,27 @@ async def test_motor_aisla_un_conector_que_revienta():
     resultado = await motor.buscar("x", [LENOVO], transporte=httpx.MockTransport(manejador))
     assert resultado.ofertas == []
     assert "formato inesperado" in resultado.tiendas_fallidas[0].error
+
+
+async def test_una_falla_de_conexion_se_reintenta_una_sola_vez():
+    intentos = []
+
+    def manejador(peticion):
+        intentos.append(1)
+        if len(intentos) == 1:
+            raise httpx.ConnectTimeout("no abrió")
+        return httpx.Response(200, json=[])
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(manejador)) as cliente:
+        respuesta = await base.pedir(cliente, "https://t.example/x")
+    assert respuesta.status_code == 200 and len(intentos) == 2
+
+    def siempre_falla(peticion):
+        intentos.append(1)
+        raise httpx.ConnectError("sin red")
+
+    intentos.clear()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(siempre_falla)) as cliente:
+        with pytest.raises(base.ErrorTienda, match="falla de red"):
+            await base.pedir(cliente, "https://t.example/x")
+    assert len(intentos) == 2

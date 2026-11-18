@@ -23,8 +23,9 @@ FAMILIAS = {
     "homecenter": "falabella",
 }
 # Diferencia máxima de precio para aceptar una coincidencia por modelo. Más que eso
-# suele ser un accesorio o un paquete distinto que menciona el mismo modelo.
-RAZON_MAXIMA = 2.5
+# suele ser un accesorio o un paquete distinto que menciona el mismo modelo (una
+# herramienta sola y su kit con baterías, por ejemplo).
+RAZON_MAXIMA = 1.8
 
 _UNIDADES = {
     "gb": "gb", "tb": "tb", "mb": "mb", "ml": "ml", "l": "l", "lt": "l", "litros": "l",
@@ -404,6 +405,71 @@ def variantes_en_otras_tiendas(
         if misma_referencia(huella, huellas[id(otra)]):
             parecidas.append(otra)
     return independientes(oferta, parecidas)
+
+
+@dataclass(frozen=True)
+class Ficha:
+    """Especificaciones que fijan el precio de un computador, sin importar la marca."""
+
+    procesador: str
+    almacenamiento: float
+    memoria: float | None
+    pantalla: str
+
+
+def ficha_de(oferta: Oferta) -> Ficha | None:
+    """La ficha técnica, o None si el nombre no trae procesador y almacenamiento."""
+    procesador_ = procesador(oferta.nombre)
+    del_nombre = medidas(oferta.nombre)
+    capacidades = sorted(_en_gb(m) for m in del_nombre if m.endswith(("gb", "tb")))
+    if not procesador_ or not capacidades or es_accesorio(oferta.nombre):
+        return None
+    pantallas = sorted(m for m in del_nombre if m.endswith("in"))
+    return Ficha(
+        procesador=procesador_,
+        almacenamiento=capacidades[-1],
+        memoria=capacidades[0] if len(capacidades) > 1 else None,
+        pantalla=pantallas[0] if pantallas else "",
+    )
+
+
+def procesador_legible(clave: str) -> str:
+    """De la clave interna a como lo escriben las tiendas: "intel5" pasa a "core i5"."""
+    if clave.startswith("intel"):
+        return f"core i{clave[5:]}"
+    if clave.startswith("ryzen"):
+        return f"ryzen {clave[5:]}"
+    return clave
+
+
+# Entre equipos de la misma ficha los precios no difieren más que esto.
+RAZON_MAXIMA_FICHA = 1.7
+
+
+def misma_ficha(a: Ficha, b: Ficha) -> bool:
+    if a.procesador != b.procesador or a.almacenamiento != b.almacenamiento:
+        return False
+    if a.memoria and b.memoria and a.memoria != b.memoria:
+        return False
+    return not (a.pantalla and b.pantalla) or a.pantalla == b.pantalla
+
+
+def comparables_por_ficha(
+    oferta: Oferta, todas: list[Oferta], fichas: dict[int, Ficha | None], excluir: set[int]
+) -> list[Oferta]:
+    """Equipos de otras voces con la misma ficha técnica: orientan cuando no hay más."""
+    propia = fichas.get(id(oferta))
+    if propia is None or es_usado(oferta.nombre):
+        return []
+    parecidos = []
+    for otra in todas:
+        ficha = fichas.get(id(otra))
+        if id(otra) in excluir or ficha is None or es_usado(otra.nombre):
+            continue
+        bajo, alto = sorted((oferta.precio, otra.precio))
+        if bajo > 0 and alto / bajo <= RAZON_MAXIMA_FICHA and misma_ficha(propia, ficha):
+            parecidos.append(otra)
+    return independientes(oferta, parecidos)
 
 
 def modelos_de(oferta: Oferta) -> set[str]:

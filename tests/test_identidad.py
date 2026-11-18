@@ -155,3 +155,33 @@ def test_reacondicionado_no_se_agrupa_ni_se_compara_con_nuevo():
     assert not identidad.misma_referencia(identidad.huella_de(nuevo), identidad.huella_de(usado))
     assert identidad.es_usado("Celular Samsung Galaxy S24 Renewed")
     assert not identidad.es_usado("Celular Samsung Galaxy S24 Nuevo")
+
+
+def test_ficha_tecnica_de_un_computador():
+    ficha = identidad.ficha_de(oferta(
+        "Computador Portátil Hp 240 G9 14 Pulgadas Intel Celeron 256 GB SSD 8 GB RAM"
+    ))
+    assert ficha == identidad.Ficha("celeron", 256.0, 8.0, "14in")
+    assert identidad.ficha_de(oferta("Televisor Samsung 55 Pulgadas")) is None
+    assert identidad.ficha_de(oferta("Cargador para Portátil Core i5 512GB")) is None
+
+
+def test_comparables_por_ficha_exige_mismo_procesador_y_almacenamiento():
+    propia = oferta("Portátil HP 240 G9 Celeron 8GB 256GB 14 Pulgadas", 1000000, "falabella", "HP")
+    iguales = [
+        oferta("Portátil Lenovo V14 Celeron 8GB 256GB 14 Pulgadas", 950000, "alkosto", "LENOVO"),
+        oferta("Portátil Asus X415 Celeron 256GB 14 Pulgadas", 1050000, "olimpica", "ASUS"),
+        oferta("Portátil Acer Aspire Celeron 8GB 256GB 14 Pulgadas", 990000, "jumbo", "ACER"),
+    ]
+    distintos = [
+        oferta("Portátil Lenovo Core i5 8GB 256GB 14 Pulgadas", 1000000, "exito", "LENOVO"),
+        oferta("Portátil Asus Celeron 8GB 512GB 14 Pulgadas", 1000000, "agaval", "ASUS"),
+        oferta("Portátil Acer Celeron 4GB 256GB 14 Pulgadas", 1000000, "pepeganga", "ACER"),
+        oferta("Portátil Dell Celeron 8GB 256GB 15.6 Pulgadas", 1000000, "panamericana", "DELL"),
+        oferta("Portátil MSI Celeron 8GB 256GB 14 Pulgadas", 3000000, "tigo", "MSI"),  # muy lejos
+        oferta("Portátil Reacondicionado Celeron 8GB 256GB 14 Pulgadas", 900000, "haceb", "HP"),
+    ]
+    todas = [propia, *iguales, *distintos]
+    fichas = {id(o): identidad.ficha_de(o) for o in todas}
+    hallados = identidad.comparables_por_ficha(propia, todas, fichas, {id(propia)})
+    assert sorted(o.tienda_id for o in hallados) == ["alkosto", "jumbo", "olimpica"]

@@ -1,5 +1,6 @@
 """Pruebas contra las tiendas reales. Se corren aparte: `uv run pytest -m red`."""
 
+import asyncio
 import os
 
 import pytest
@@ -12,6 +13,7 @@ from ofertas.tiendas import TIENDAS
 # Éxito está detrás de un antibot que rechaza por rachas (HTTP 403 o conexión cortada)
 # tras varias consultas seguidas. El motor no lo evade: lo reporta en la cobertura.
 INESTABLES = {"exito"}
+FALLAS_DE_RED = ("no respondió a tiempo", "falla de red")
 
 # Un término que cada tienda debería tener en su catálogo.
 TERMINOS = {
@@ -84,9 +86,19 @@ async def test_la_tienda_responde_con_ofertas(tienda):
         pytest.skip("abre una ventana de Edge; actívala con OFERTAS_PRUEBA_NAVEGADOR=1")
     async with motor.crear_cliente() as cliente:
         try:
-            ofertas, recibidos, _ = await motor.CONECTORES[tienda.plataforma](
-                cliente, tienda, TERMINOS[tienda.id], 10
-            )
+            try:
+                ofertas, recibidos, _ = await motor.CONECTORES[tienda.plataforma](
+                    cliente, tienda, TERMINOS[tienda.id], 10
+                )
+            except ErrorTienda as exc:
+                # Una conexión caída es un tropiezo de la red del equipo, no de la tienda:
+                # se espera un momento y se prueba una vez más antes de darla por fallida.
+                if not any(m in str(exc) for m in FALLAS_DE_RED) or tienda.id in INESTABLES:
+                    raise
+                await asyncio.sleep(5)
+                ofertas, recibidos, _ = await motor.CONECTORES[tienda.plataforma](
+                    cliente, tienda, TERMINOS[tienda.id], 10
+                )
         except ErrorTienda as exc:
             if tienda.id in INESTABLES:
                 pytest.xfail(f"{tienda.nombre} bloquea de forma intermitente: {exc}")

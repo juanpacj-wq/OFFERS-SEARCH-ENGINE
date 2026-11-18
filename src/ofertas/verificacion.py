@@ -10,6 +10,8 @@ from ofertas.identidad import Grupo
 from ofertas.modelos import Oferta, Resultado
 from ofertas.tiendas import seleccionar
 
+# En modo profundo, cuántas fichas técnicas distintas se salen a buscar en las tiendas.
+FICHAS_A_AMPLIAR = 2
 # Cuántos productos distintos se investigan afuera en una búsqueda normal y en una profunda.
 GRUPOS_NORMAL = 10
 GRUPOS_PROFUNDO = 12
@@ -119,6 +121,15 @@ async def verificar(
                 avisos.append(f"No se pudo investigar el precio internacional ({exc}).")
 
     huellas = {id(o): identidad.huella_de(o) for o in resultado.ofertas}
+    fichas = {id(o): identidad.ficha_de(o) for o in resultado.ofertas}
+    # Equipos de otras marcas con la misma ficha: los de esta búsqueda y, en modo
+    # profundo, los que se salgan a buscar aparte.
+    universo = list(resultado.ofertas)
+    if profundo:
+        ampliacion = await _buscar_por_ficha(grupos, fichas, referencias, transporte)
+        for oferta in ampliacion:
+            fichas[id(oferta)] = identidad.ficha_de(oferta)
+        universo += ampliacion
     for grupo in grupos:
         referencia = referencias.get(id(grupo))
         del_grupo = {id(o) for o in grupo.ofertas}
@@ -133,6 +144,15 @@ async def verificar(
                 else None
             )
             juicio = veredicto.evaluar(oferta, otras, oferta.historial, referencia, variantes)
+            if juicio.clase == "sin_referencia":
+                # Sin nada mejor, orienta el precio de otros equipos con la misma ficha.
+                comparables = identidad.comparables_por_ficha(
+                    oferta, universo, fichas, del_grupo
+                )
+                if comparables:
+                    juicio = veredicto.evaluar(
+                        oferta, otras, oferta.historial, referencia, variantes, comparables
+                    )
             datos = juicio.a_dict()
             datos["coincidencia_entre_tiendas"] = grupo.via
             if referencia:
@@ -142,6 +162,7 @@ async def verificar(
                     "en_pesos": round(referencia.en_pesos),
                     "con_iva": round(referencia.con_iva),
                     "tope_normal": round(referencia.tope_normal),
+                    "margen_importacion": referencia.margen,
                     "coincidencia": referencia.coincidencia,
                     "ejemplo": referencia.ejemplo,
                     "url": referencia.url,
@@ -149,6 +170,39 @@ async def verificar(
                 }
             oferta.veredicto = datos
     return grupos, avisos
+
+
+async def _buscar_por_ficha(
+    grupos: list[Grupo],
+    fichas: dict[int, identidad.Ficha | None],
+    referencias: dict[int, veredicto.Internacional],
+    transporte=None,
+) -> list[Oferta]:
+    """Busca en las tiendas computadores con el procesador de los productos sin referencia.
+
+    Un portátil de configuración regional que solo vende una tienda no tiene con qué
+    compararse; sí se puede saber cuánto cuestan otros equipos con su mismo procesador,
+    memoria y almacenamiento. Es una búsqueda completa por ficha, así que se limita.
+    """
+    procesadores: list[str] = []
+    for grupo in ordenar_para_informe(grupos):
+        duenos = {identidad.familia(o.tienda_id) for o in grupo.ofertas}
+        if id(grupo) in referencias or len(duenos) > 1:
+            continue
+        ficha = fichas.get(id(grupo.principal))
+        if ficha and ficha.procesador not in procesadores:
+            procesadores.append(ficha.procesador)
+    halladas: list[Oferta] = []
+    for procesador in procesadores[:FICHAS_A_AMPLIAR]:
+        consulta = f"portatil {identidad.procesador_legible(procesador)}"
+        try:
+            ampliado = await motor.buscar(
+                consulta, seleccionar(None), limite_por_tienda=40, transporte=transporte
+            )
+        except Exception:
+            continue  # es un complemento: si falla, el informe sigue sin esa evidencia
+        halladas += ampliado.ofertas
+    return halladas
 
 
 def resumen(ofertas: list[Oferta]) -> dict[str, int]:

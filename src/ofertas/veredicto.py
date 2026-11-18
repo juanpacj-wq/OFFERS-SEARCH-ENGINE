@@ -14,6 +14,9 @@ El módulo es lógica pura: no consulta nada. Recibe la evidencia ya reunida.
 
 from __future__ import annotations
 
+import os
+import re
+import unicodedata
 from dataclasses import asdict, dataclass, field
 from statistics import median
 
@@ -28,14 +31,44 @@ TOLERANCIA_SOBREPRECIO = 0.05
 DESCUENTO_ANUNCIADO_MINIMO = 5.0
 # Cuánto por encima del precio real debe estar el precio de lista para llamarlo inflado.
 INFLADO_MINIMO = 0.10
+# Voces independientes necesarias para orientarse por equipos de igual ficha técnica.
+# Con dos ya hay una idea del precio; el veredicto sale marcado como aproximado.
+MIN_COMPARABLES = 2
 # Para confiar en el historial: observaciones y días mínimos.
 MIN_OBSERVACIONES = 3
 MIN_DIAS = 7
 # Colombia cobra IVA y los precios publicados afuera no lo incluyen.
 IVA = 0.19
 # Sobrecosto razonable de traer y vender un producto en Colombia (flete, arancel,
-# margen del importador). El precio local se considera normal hasta este tope.
+# margen del importador). El precio local se considera normal hasta este tope. Es una
+# estimación general: el arancel colombiano va de 0% a 40% según el producto y el origen.
+# Se puede cambiar con la variable de entorno OFERTAS_MARGEN_IMPORTACION (por ejemplo 0.2).
 MARGEN_IMPORTACION = 0.30
+# Las confecciones pagan 40% de arancel cuando no vienen de un país con TLC (Decreto
+# 2598 de 2022), así que su sobrecosto razonable es mayor.
+MARGEN_CONFECCIONES = 0.55
+_CONFECCIONES = frozenset(
+    ["camiseta", "camisetas", "camisa", "camisas", "pantalon", "pantalones", "jean", "jeans",
+     "chaqueta", "chaquetas", "buzo", "buzos", "sudadera", "vestido", "vestidos", "blusa",
+     "blusas", "falda", "short", "shorts", "pantaloneta", "medias", "abrigo", "saco", "polo",
+     "bermuda", "leggings", "hoodie", "brasier", "boxer", "pijama"]
+)
+
+
+def margen_para(nombre: str) -> float:
+    """Sobrecosto de importación que se considera normal para un producto."""
+    configurado = os.environ.get("OFERTAS_MARGEN_IMPORTACION", "").strip()
+    try:
+        if configurado and 0 <= float(configurado) <= 2:
+            return float(configurado)
+    except ValueError:
+        pass
+    plano = "".join(
+        c for c in unicodedata.normalize("NFKD", nombre.lower()) if not unicodedata.combining(c)
+    )
+    if _CONFECCIONES.intersection(re.findall(r"[a-z]+", plano)):
+        return MARGEN_CONFECCIONES
+    return MARGEN_IMPORTACION
 # Si todo el mercado local supera el tope internacional por más de esto, se advierte.
 ALERTA_SOBRE_INTERNACIONAL = 0.15
 
@@ -83,6 +116,8 @@ class Internacional:
     ejemplo: str = ""
     url: str = ""
     candidatos: int = 1
+    # Sobrecosto de importación que se acepta como normal para este producto.
+    margen: float = MARGEN_IMPORTACION
 
     @property
     def en_pesos(self) -> float:
@@ -97,12 +132,12 @@ class Internacional:
     @property
     def tope_normal(self) -> float:
         """Precio local máximo que todavía se explica por los costos de importar."""
-        return self.con_iva * (1 + MARGEN_IMPORTACION)
+        return self.con_iva * (1 + self.margen)
 
     @property
     def normal_esperado(self) -> float:
         """Precio local que cabría esperar: IVA más la mitad del margen de importación."""
-        return self.con_iva * (1 + MARGEN_IMPORTACION / 2)
+        return self.con_iva * (1 + self.margen / 2)
 
     @property
     def confiable(self) -> bool:
@@ -111,7 +146,7 @@ class Internacional:
 
 @dataclass
 class Evidencia:
-    tipo: str  # "mercado", "historial" o "internacional"
+    tipo: str  # "mercado", "historial", "internacional" o "ficha"
     precio: float
     detalle: str
     fuerza: str  # "fuerte", "media" o "aproximada"
@@ -154,6 +189,7 @@ def reunir_evidencias(
     historial: dict | None = None,
     internacional: Internacional | None = None,
     variantes: list[Oferta] | None = None,
+    comparables: list[Oferta] | None = None,
 ) -> list[Evidencia]:
     """Arma la lista de evidencias disponibles, de la más confiable a la menos."""
     evidencias: list[Evidencia] = []
@@ -183,6 +219,14 @@ def reunir_evidencias(
             f" presentación ({nombres}); la más barata, {_pesos(precios[0])}",
             "media", f"mediana de {len(precios)} tiendas con la misma referencia en otro color",
         ))
+    elif not otras_tiendas and variantes:
+        # Una sola tienda más con la misma referencia, reconocida por el nombre.
+        otra = variantes[0]
+        evidencias.append(Evidencia(
+            "mercado", otra.precio,
+            f"precio en {otra.tienda}, que vende la misma referencia (reconocida por el nombre)",
+            "media", f"precio en {otra.tienda} de la misma referencia",
+        ))
     if (
         historial
         and historial.get("veces_visto", 0) >= MIN_OBSERVACIONES
@@ -208,8 +252,18 @@ def reunir_evidencias(
             f"afuera vale US$ {internacional.precio_usd:,.2f}, que con IVA e importación"
             f" son unos {_pesos(internacional.normal_esperado)}",
         ))
+    if comparables and len(comparables) >= MIN_COMPARABLES:
+        # Último recurso: equipos de otras marcas o modelos con la misma ficha técnica.
+        precios = sorted(o.precio for o in comparables)
+        evidencias.append(Evidencia(
+            "ficha", median(precios),
+            f"mediana de {len(precios)} equipos con el mismo procesador, memoria y"
+            f" almacenamiento en otras tiendas; el más barato, {_pesos(precios[0])}",
+            "aproximada",
+            f"mediana de {len(precios)} equipos con la misma ficha técnica",
+        ))
     orden = {"fuerte": 0, "media": 1, "aproximada": 2}
-    tipo = {"mercado": 0, "historial": 1, "internacional": 2}
+    tipo = {"mercado": 0, "historial": 1, "internacional": 2, "ficha": 3}
     # sorted es estable: entre dos evidencias de mercado de igual fuerza gana la primera.
     return sorted(evidencias, key=lambda e: (orden[e.fuerza], tipo[e.tipo]))
 
@@ -220,10 +274,13 @@ def evaluar(
     historial: dict | None = None,
     internacional: Internacional | None = None,
     variantes: list[Oferta] | None = None,
+    comparables: list[Oferta] | None = None,
 ) -> Veredicto:
     """Decide qué tan real es la oferta comparándola con el precio real estimado."""
     anunciado = oferta.descuento_pct
-    evidencias = reunir_evidencias(oferta, otras_tiendas, historial, internacional, variantes)
+    evidencias = reunir_evidencias(
+        oferta, otras_tiendas, historial, internacional, variantes, comparables
+    )
     if not evidencias:
         aviso = (
             f"La tienda anuncia {anunciado:.0f}% de descuento, pero no hay con qué comprobarlo:"
@@ -299,7 +356,11 @@ def evaluar(
     titulo = CLASES[clase]
     if principal.fuerza == "aproximada":
         titulo += " (aproximado)"
-        texto += " Sin confirmar: la referencia es un producto equivalente, no el idéntico."
+        texto += (
+            " Sin confirmar: son otros equipos de igual ficha, y la marca también pesa."
+            if principal.tipo == "ficha"
+            else " Sin confirmar: la referencia es un producto equivalente, no el idéntico."
+        )
     elif principal.fuerza == "media" and len(evidencias) == 1:
         texto += (
             " La evidencia es limitada: confirma que sea la misma presentación."

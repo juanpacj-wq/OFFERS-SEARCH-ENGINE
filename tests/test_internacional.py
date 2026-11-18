@@ -89,7 +89,7 @@ def test_mismo_modelo_tolera_sufijo_y_reconoce_el_codigo_de_familia():
     # Mismo modelo con el sufijo de otro país.
     assert internacional.calificar(
         TV, candidato("Samsung 55 Crystal UHD", 380, codigo="UN55CU7000FXZA"), TRM
-    ) == ("modelo", 1.0)
+    ) == ("modelo", 0.95)
     assert internacional.calificar(
         TV, candidato("Samsung 55 Crystal UHD", 380, codigo="UN55U8000FFXZA"), TRM
     ) is None
@@ -145,6 +145,17 @@ def test_las_palabras_en_espanol_no_impiden_reconocer_el_equivalente():
 def test_una_sola_palabra_en_comun_no_basta():
     celular = grupo_de(oferta("Celular Samsung Galaxy A16 128GB", 700000))
     assert internacional.resumir(celular, [candidato("Samsung Galaxy Buds 3", 150)], TRM) is None
+
+
+def test_el_sufijo_regional_no_basta_si_cambia_la_configuracion():
+    hp = grupo_de(oferta(
+        'Computador Portátil HP 15" Pulgadas 15-fd0131la - Intel Core i3 - RAM 8GB - SSD 512GB',
+        2000000, "HP",
+    ))
+    otra_capacidad = candidato("HP 15-Fd0133wm 15.6 Laptop Intel i3 8GB RAM 256GB SSD", 402.60)
+    misma = candidato("HP 15-Fd0139wm 15.6 Laptop Intel i3 8GB RAM 512GB SSD", 430.00)
+    assert internacional.calificar(hp, otra_capacidad, TRM) is None
+    assert internacional.calificar(hp, misma, TRM) == ("modelo", 0.95)
 
 
 def test_resumir_prefiere_la_coincidencia_mas_segura_y_usa_la_mediana():

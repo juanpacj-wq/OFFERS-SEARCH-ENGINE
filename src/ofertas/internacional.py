@@ -31,7 +31,7 @@ import httpx
 from ofertas import identidad
 from ofertas.conectores.base import ErrorTienda, a_numero, leer_json, pedir
 from ofertas.identidad import Grupo
-from ofertas.veredicto import IVA, Internacional
+from ofertas.veredicto import IVA, Internacional, margen_para
 
 VIGENCIA_CACHE = timedelta(days=7)
 # UPCitemdb (plan gratuito) rechaza consultas seguidas: hay que espaciarlas.
@@ -248,12 +248,16 @@ def calificar(
     # Con el mismo código de modelo es el mismo producto aunque los nombres difieran,
     # salvo que el anuncio solo lo mencione ("control para...", "paquete con...").
     de_la_marca = bool(candidato.get("de_marca"))
-    if (de_la_marca or not identidad.menciona_sin_ser(titulo)) and any(
-        identidad.mismo_modelo(a, b) or identidad.variante_regional(a, b)
-        for a in grupo.modelos
-        for b in codigos
-    ):
-        return "modelo", 1.0
+    if de_la_marca or not identidad.menciona_sin_ser(titulo):
+        pares = [(a, b) for a in grupo.modelos for b in codigos]
+        if any(identidad.mismo_modelo(a, b) for a, b in pares):
+            return "modelo", 1.0
+        # Con otro sufijo de país puede cambiar la configuración (HP 15-fd0131la de 512 GB
+        # y 15-fd0133wm de 256 GB): solo vale si las especificaciones no se contradicen.
+        if any(identidad.variante_regional(a, b) for a, b in pares) and _misma_configuracion(
+            principal.nombre, titulo
+        ):
+            return "modelo", 0.95
     if identidad.es_accesorio(titulo) != identidad.es_accesorio(principal.nombre):
         return None
     # Afuera el modelo suele venir sin prefijo ni sufijo regional: "CU7000" es el
@@ -283,22 +287,24 @@ def calificar(
     variantes = identidad.VARIANTES
     if variantes.intersection(propias) != variantes.intersection(palabras_candidato):
         return None
-    # Si el candidato dice memoria o capacidad, debe traer todas las del producto local;
-    # si dice tamaño, debe ser el mismo. Y el procesador, si ambos lo dicen, igual.
-    medidas_locales = identidad.medidas(principal.nombre)
-    medidas_afuera = identidad.medidas(titulo)
-    for unidades in (("gb", "tb"), ("in",)):
-        locales = {m for m in medidas_locales if m.endswith(unidades)}
-        afuera = {m for m in medidas_afuera if m.endswith(unidades)}
-        if locales and afuera and not identidad.medidas_compatibles(locales, afuera):
-            return None
-    cpu_local, cpu_afuera = identidad.procesador(principal.nombre), identidad.procesador(titulo)
-    if cpu_local and cpu_afuera and cpu_local != cpu_afuera:
+    if not _misma_configuracion(principal.nombre, titulo):
         return None
     cobertura = sum(1 for p in propias if p in palabras_candidato) / len(propias)
     if cobertura < COBERTURA_MINIMA:
         return None
     return "equivalente", cobertura
+
+
+def _misma_configuracion(local: str, afuera: str) -> bool:
+    """Capacidad, tamaño y procesador no se contradicen (cuando los dos nombres los traen)."""
+    medidas_locales, medidas_afuera = identidad.medidas(local), identidad.medidas(afuera)
+    for unidades in (("gb", "tb"), ("in",)):
+        aqui = {m for m in medidas_locales if m.endswith(unidades)}
+        alla = {m for m in medidas_afuera if m.endswith(unidades)}
+        if aqui and alla and not identidad.medidas_compatibles(aqui, alla):
+            return False
+    cpu_local, cpu_afuera = identidad.procesador(local), identidad.procesador(afuera)
+    return not (cpu_local and cpu_afuera) or cpu_local == cpu_afuera
 
 
 def resumir(grupo: Grupo, candidatos: list[dict], trm: float) -> Internacional | None:
@@ -320,6 +326,7 @@ def resumir(grupo: Grupo, candidatos: list[dict], trm: float) -> Internacional |
         elegidos = [c[3] for c in calificados if c[2] == mejor_clase and -c[1] >= tope - 0.15]
     return Internacional(
         precio_usd=round(median(a_numero(c["precio_usd"]) for c in elegidos), 2),
+        margen=margen_para(grupo.principal.nombre),
         trm=trm,
         coincidencia=mejor_clase,
         fuentes=sorted({c["fuente"] for c in elegidos}),

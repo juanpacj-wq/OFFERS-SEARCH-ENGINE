@@ -44,7 +44,14 @@ En orden de confianza:
 3. **Historial propio:** el precio habitual del producto en esa tienda (3 observaciones
    en 7 días o más).
 4. **Precio internacional:** lo que cuesta afuera, convertido con la TRM oficial del
-   día, más el IVA (19%) y un margen de importación (hasta 30%).
+   día, más el IVA (19%) y un margen de importación: hasta 30% en general y hasta 55%
+   en confecciones, que pagan 40% de arancel cuando no vienen de un país con TLC. Se
+   puede cambiar con la variable `OFERTAS_MARGEN_IMPORTACION` (por ejemplo `0.2`).
+5. **Equipos de igual ficha técnica:** para computadores que solo vende una tienda y no
+   tienen referencia afuera, la mediana de otros equipos con el mismo procesador,
+   memoria y almacenamiento (3 tiendas o más). Es la evidencia más débil: el veredicto
+   sale "(aproximado)". En `verificar` se hace además una búsqueda aparte de equipos con
+   ese procesador en todas las tiendas.
 
 ### Cómo se reconoce el mismo producto
 
@@ -102,11 +109,10 @@ búsqueda en las tiendas). `verificar` investiga hasta 12.
 - Productos de marcas locales (Totto, Vélez) no tienen precio internacional: se juzgan
   con el mercado local y el historial.
 - Si un producto solo lo vende una tienda, no hay historial y afuera no existe el
-  mismo modelo ni un equivalente, queda "sin verificar". Pasa sobre todo con portátiles
-  de configuración regional (el motor no acepta como equivalente uno con otro
-  procesador o memoria) y con marcas que solo se venden en Colombia.
-- El margen de importación es una estimación general; el arancel real cambia por
-  categoría.
+  mismo modelo ni un equivalente, queda "sin verificar". Pasa con marcas que solo se
+  venden en Colombia y con productos sin ficha técnica comparable. Para portátiles de
+  configuración regional conviene `verificar`, que busca equipos de igual ficha.
+- El margen de importación es una estimación, no el arancel exacto de cada producto.
 - Las constantes del juicio están en `src/ofertas/veredicto.py`.
 
 ## Historial de precios y seguimiento
@@ -247,7 +253,8 @@ uv run pytest -m red     # contra las tiendas reales
 - El motor atiende búsquedas puntuales pedidas por una persona; no rastrea catálogos ni
   corre de forma programada. Por decisión del dueño del proyecto, no se guía por los
   `robots.txt` de las tiendas.
-- Una tienda que falla no tumba la búsqueda: queda reportada en la cobertura.
+- Una tienda que falla no tumba la búsqueda: queda reportada en la cobertura. Una
+  conexión que no alcanza a abrirse se reintenta una sola vez.
 - Los certificados se validan contra el almacén del sistema operativo (`truststore`).
 - La configuración del buscador de Alkosto, Ktronix y Alkomprar se guarda 6 horas en
   `~/.cache/ofertas` (o en la carpeta que indique `OFERTAS_CACHE`), porque leerla

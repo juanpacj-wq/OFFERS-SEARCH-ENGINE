@@ -55,10 +55,15 @@ Reglas al responder:
 2. Si `confianza` es `aproximada`, dilo: la referencia es un producto equivalente. Si
    es `media` y la única evidencia es internacional, pide confirmar que sea la misma
    presentación (por ejemplo, herramienta sola o kit con baterías).
-3. Si el texto avisa que todo el mercado local está inflado frente al exterior,
+3. Si el título dice "(aproximado)" por ficha técnica, explícalo: se comparó con otros
+   computadores de igual procesador, memoria y almacenamiento, no con el mismo equipo.
+   Para portátiles sin referencia usa `verificar`, que busca esos equipos aparte.
+4. Si un grupo de "mismo producto" tiene precios muy distintos entre tiendas, advierte
+   que pueden ser presentaciones diferentes (kit, baterías, accesorios incluidos).
+5. Si el texto avisa que todo el mercado local está inflado frente al exterior,
    menciónalo aunque la oferta sea la más barata.
-4. Para pedir solo lo que vale la pena: `--solo-reales --orden ahorro`.
-5. Cuando el usuario pregunte si una oferta concreta es real, usa
+6. Para pedir solo lo que vale la pena: `--solo-reales --orden ahorro`.
+7. Cuando el usuario pregunte si una oferta concreta es real, usa
    `uv run ofertas verificar "<producto>" --json`: investiga más productos afuera y
    espera a las fuentes lentas. Tarda más (hasta un minuto si hay varios productos).
    Con `--navegador` suma Amazon como fuente internacional (abre Edge).

@@ -161,3 +161,38 @@ def test_el_veredicto_es_serializable():
     assert datos["clase"] == "oferta_falsa"
     assert [e["tipo"] for e in datos["evidencias"]] == ["mercado", "internacional"]
     assert datos["evidencias"][0]["fuerza"] == "fuerte"
+
+
+def test_equipos_de_la_misma_ficha_orientan_cuando_no_hay_nada_mas():
+    comparables = otras(1000000, 1050000, 1100000)
+    juicio = veredicto.evaluar(oferta(1040000, 2500000), [], comparables=comparables)
+    assert juicio.clase == "oferta_falsa"
+    assert juicio.titulo == "Oferta engañosa (aproximado)"
+    assert juicio.confianza == "aproximada"
+    assert not juicio.favorable
+    assert "misma ficha técnica" in juicio.texto
+    assert "la marca también pesa" in juicio.texto
+    # Con un solo equipo comparable no se pronuncia.
+    assert veredicto.evaluar(oferta(1040000, 2500000), [],
+                             comparables=otras(1000000)).clase == "sin_referencia"
+
+
+def test_una_sola_tienda_con_la_misma_referencia_es_evidencia_limitada():
+    juicio = veredicto.evaluar(oferta(999999, 1680000), [], variantes=otras(1139775))
+    assert juicio.clase == "descuento_real"
+    assert juicio.confianza == "media"
+    assert "de la misma referencia" in juicio.texto
+    assert "evidencia es limitada" in juicio.texto
+
+
+def test_el_margen_de_importacion_es_mayor_para_confecciones_y_se_puede_configurar(monkeypatch):
+    monkeypatch.delenv("OFERTAS_MARGEN_IMPORTACION", raising=False)
+    assert veredicto.margen_para("Televisor Samsung 55") == 0.30
+    assert veredicto.margen_para("Camiseta Polo Hombre Manga Corta") == 0.55
+    assert veredicto.margen_para("Chaqueta Impermeable para Mujer") == 0.55
+    ropa = Internacional(precio_usd=100, trm=4000.0, coincidencia="modelo", margen=0.55)
+    assert ropa.tope_normal == pytest.approx(476000 * 1.55)
+    monkeypatch.setenv("OFERTAS_MARGEN_IMPORTACION", "0.2")
+    assert veredicto.margen_para("Televisor Samsung 55") == 0.2
+    monkeypatch.setenv("OFERTAS_MARGEN_IMPORTACION", "mucho")
+    assert veredicto.margen_para("Televisor Samsung 55") == 0.30
