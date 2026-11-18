@@ -50,11 +50,14 @@ Clases:
   (`reales_en_la_busqueda` de `comprobadas_en_la_busqueda`), cítala como contexto: no
   es un veredicto sobre esa oferta, pero dice cuánto creerle a ese tipo de anuncio.
 
-Qué esperar por categoría: en productos con marca y modelo (celulares, portátiles,
-televisores, electrodomésticos, consolas) casi todo se puede comprobar. En productos
-genéricos o de marca local (colchones, sillas, bicicletas, morrales) casi nada, porque
-no existe el mismo producto en otra tienda ni afuera; ahí dilo sin rodeos y apóyate en
-el contexto de la búsqueda y en el historial.
+Qué esperar por categoría: en productos con marca y modelo (celulares, televisores,
+electrodomésticos, consolas) se comprueba la gran mayoría. En productos genéricos o de
+marca local (colchones, sillas, bicicletas, morrales) poco, porque no existe el mismo
+producto en otra tienda ni afuera. Para esos el texto del veredicto trae el rango de
+precios de la búsqueda ("la mitad central se vende entre X y Y") y solo llama engañosa
+una oferta cuando el precio de lista está por encima de casi todo el mercado. Cita ese
+rango, di si el precio cae dentro o fuera, y aclara que compara productos parecidos,
+no el mismo.
 
 Reglas al responder:
 

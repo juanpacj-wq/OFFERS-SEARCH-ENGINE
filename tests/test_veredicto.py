@@ -196,3 +196,42 @@ def test_el_margen_de_importacion_sale_del_arancel_y_se_puede_configurar(monkeyp
     assert veredicto.margen_con_arancel(0.40) == 0.25
     monkeypatch.setenv("OFERTAS_MARGEN_IMPORTACION", "mucho")
     assert veredicto.margen_con_arancel(0.0) == 0.20
+
+
+MERCADO = veredicto.Mercado(productos=40, tiendas=8, p25=500000, mediana=650000, p75=800000,
+                            p90=1200000)
+
+
+def test_producto_generico_con_lista_fuera_del_mercado():
+    """Un colchón que nadie más vende: antes $2.500.000, ahora $700.000."""
+    juicio = veredicto.evaluar(oferta(700000, 2500000), [], mercado=MERCADO)
+    assert juicio.clase == "oferta_falsa"
+    assert juicio.titulo == "Oferta engañosa (aproximado)"
+    assert juicio.confianza == "aproximada"
+    assert not juicio.favorable
+    assert juicio.precio_real is None
+    assert juicio.lista_inflada_pct == 108.3
+    assert "9 de cada 10 por menos de $1.200.000" in juicio.texto
+    assert "se calcula sobre una lista fuera de rango" in juicio.texto
+
+
+def test_producto_generico_sin_patron_claro_no_se_juzga_pero_se_ubica():
+    # Lista dentro de lo que cobra el mercado: puede ser un descuento legítimo.
+    normal = veredicto.evaluar(oferta(700000, 1000000), [], mercado=MERCADO)
+    assert normal.clase == "sin_referencia"
+    assert "Este precio está dentro de ese rango" in normal.texto
+    # Lista altísima pero el precio también es alto: puede ser un producto superior.
+    caro = veredicto.evaluar(oferta(1500000, 3000000), [], mercado=MERCADO)
+    assert caro.clase == "sin_referencia"
+    assert "está por encima de ese rango" in caro.texto
+    barato = veredicto.evaluar(oferta(300000, 600000), [], mercado=MERCADO)
+    assert "puede ser una oferta o un producto más sencillo" in barato.texto
+
+
+def test_el_mercado_no_reemplaza_la_evidencia_del_mismo_producto():
+    juicio = veredicto.evaluar(oferta(700000, 2500000), otras(690000, 710000, 705000),
+                               mercado=MERCADO)
+    assert (juicio.clase, juicio.confianza) == ("oferta_falsa", "fuerte")
+    assert juicio.precio_real == 705000
+    # Sin descuento anunciado no hay nada que desmentir.
+    assert veredicto.evaluar(oferta(700000), [], mercado=MERCADO).clase == "sin_referencia"

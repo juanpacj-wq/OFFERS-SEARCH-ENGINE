@@ -52,12 +52,22 @@ async def evaluar(consulta: str, conexion) -> dict:
     for oferta in con_descuento:
         conteo[oferta.veredicto["clase"]] = conteo.get(oferta.veredicto["clase"], 0) + 1
     comprobadas = len(con_descuento) - conteo["sin_referencia"]
+    todas = [
+        o for o in resultado.ofertas
+        if o.descuento_pct >= veredicto.DESCUENTO_ANUNCIADO_MINIMO
+    ]
+    todas_comprobadas = [o for o in todas if o.veredicto["clase"] != "sin_referencia"]
     return {
         "consulta": consulta,
         "ofertas": len(resultado.ofertas),
         "con_descuento": len(con_descuento),
         "conteo": conteo,
         "comprobadas": comprobadas,
+        "todas": len(todas),
+        "todas_comprobadas": len(todas_comprobadas),
+        "todas_reales": sum(
+            1 for o in todas_comprobadas if o.veredicto["clase"] == "descuento_real"
+        ),
         "aproximadas": sum(
             1 for o in con_descuento if o.veredicto.get("confianza") == "aproximada"
         ),
@@ -86,8 +96,8 @@ async def main() -> None:
         " anuncian descuento.",
         "",
         "| Búsqueda | Ofertas | Con descuento | Reales | Engañosas | Más caras | Sin verificar"
-        " | Comprobadas | Aproximadas | Con precio internacional | Tiempo |",
-        "|---|---|---|---|---|---|---|---|---|---|---|",
+        " | Comprobadas | Aproximadas | Con precio internacional | Toda la búsqueda | Tiempo |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for f in filas:
         c = f["conteo"]
@@ -96,7 +106,9 @@ async def main() -> None:
             f"| {f['consulta']} | {f['ofertas']} | {f['con_descuento']} | {c['descuento_real']}"
             f" | {c['oferta_falsa']} | {c['sobreprecio']} | {c['sin_referencia']} | {pct}"
             f" | {f['aproximadas']} | {f['con_internacional']} de {MOSTRADAS}"
-            f" | {f['segundos']:.0f} s |"
+            f" | {f['todas_comprobadas']} de {f['todas']}"
+            + (f" ({f['todas_comprobadas'] / f['todas'] * 100:.0f}%)" if f["todas"] else "")
+            + f", {f['todas_reales']} reales | {f['segundos']:.0f} s |"
         )
     total = sum(f["con_descuento"] for f in filas)
     comprobadas = sum(f["comprobadas"] for f in filas)
@@ -105,7 +117,9 @@ async def main() -> None:
         "",
         f"**Total:** {total} ofertas con descuento anunciado; {comprobadas}"
         f" ({comprobadas / total * 100:.0f}%) se pudieron comprobar y, de esas, {reales}"
-        f" ({reales / comprobadas * 100:.0f}%) eran descuentos reales."
+        f" ({reales / comprobadas * 100:.0f}%) eran descuentos reales. En todas las ofertas"
+        f" de las búsquedas: {sum(f['todas_comprobadas'] for f in filas)} comprobadas de"
+        f" {sum(f['todas'] for f in filas)}, y {sum(f['todas_reales'] for f in filas)} reales."
         if total and comprobadas else "**Total:** sin ofertas con descuento.",
         "",
         "- **Comprobadas:** tienen veredicto distinto de \"sin verificar\".",
@@ -113,6 +127,9 @@ async def main() -> None:
         " igual ficha técnica; están incluidas en las comprobadas.",
         "- **Con precio internacional:** ofertas mostradas para las que se halló referencia"
         " afuera, tengan o no descuento anunciado.",
+        "- **Toda la búsqueda:** las mismas cuentas sobre todas las ofertas con descuento"
+        " anunciado, no solo las 20 primeras. Ahí no se investiga el precio internacional"
+        " (solo se hace para lo que se muestra), así que es el alcance del mercado local.",
         "- **Tiempo:** búsqueda en las tiendas más verificación, sin nada en caché.",
     ]
     texto = "\n".join(lineas) + "\n"

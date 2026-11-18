@@ -191,3 +191,23 @@ def test_lo_no_comprobable_trae_la_proporcion_de_reales_de_la_busqueda():
     assert verificacion.proporcion_de_reales(pocas) is None
     verificacion._agregar_contexto(pocas)
     assert pocas[1].veredicto["texto"] == "Base."
+
+
+def test_mercado_de_la_busqueda_exige_suficientes_productos_y_tiendas():
+    from ofertas import verificacion
+    from ofertas.modelos import Oferta
+
+    def colchon(tienda, precio, nombre="Colchón doble"):
+        return Oferta(tienda, tienda, nombre, "", float(precio), float(precio), f"https://{tienda}/p")
+
+    propia = colchon("falabella", 700000)
+    pocas = [colchon(f"t{i}", 500000 + i * 1000) for i in range(5)]
+    assert verificacion.mercado_para(propia, [propia, *pocas]) is None
+
+    otras = [colchon(f"t{i % 6}", 400000 + i * 20000) for i in range(21)]
+    hermana = colchon("homecenter", 9000000)  # mismo dueño que Falabella: no cuenta
+    usado = colchon("t1", 50000, "Colchón doble usado")  # tampoco: otra condición
+    mercado = verificacion.mercado_para(propia, [propia, hermana, usado, *otras])
+    assert (mercado.productos, mercado.tiendas) == (21, 6)
+    assert mercado.p25 == 500000 and mercado.mediana == 600000
+    assert mercado.p75 == 700000 and mercado.p90 == 760000

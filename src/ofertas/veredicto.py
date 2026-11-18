@@ -139,8 +139,25 @@ class Internacional:
 
 
 @dataclass
+class Mercado:
+    """Cómo se reparten los precios de venta de lo que otras tiendas ofrecen en la búsqueda.
+
+    Sirve para productos genéricos o de marca local (colchones, sillas, bicicletas), que
+    no tienen "el mismo producto" en otra tienda. No dice cuánto vale este artículo, pero
+    sí permite ver si su precio de lista está fuera de lo que cobra el mercado.
+    """
+
+    productos: int
+    tiendas: int
+    p25: float
+    mediana: float
+    p75: float
+    p90: float
+
+
+@dataclass
 class Evidencia:
-    tipo: str  # "mercado", "historial", "internacional" o "ficha"
+    tipo: str  # "mercado", "historial", "internacional", "ficha" o "categoria"
     precio: float
     detalle: str
     fuerza: str  # "fuerte", "media" o "aproximada"
@@ -263,6 +280,54 @@ def reunir_evidencias(
     return sorted(evidencias, key=lambda e: (orden[e.fuerza], tipo[e.tipo]))
 
 
+def _segun_el_mercado(oferta: Oferta, mercado: Mercado) -> Veredicto:
+    """Juicio aproximado para un producto que nadie más vende, mirando su categoría.
+
+    Solo se pronuncia en el caso claro: el precio de lista está por encima de lo que
+    cobra casi todo el mercado y el precio con descuento es el corriente. En lo demás
+    no hay cómo saber si el producto es mejor o peor que los otros, y se dice así.
+    """
+    anunciado = oferta.descuento_pct
+    rango = (
+        f"En esta búsqueda, {mercado.productos} productos de {mercado.tiendas} tiendas más se"
+        f" venden entre {_pesos(mercado.p25)} y {_pesos(mercado.p75)} (la mitad central),"
+        f" y 9 de cada 10 por menos de {_pesos(mercado.p90)}."
+    )
+    if oferta.precio_lista > mercado.p90 and oferta.precio <= mercado.p75:
+        return Veredicto(
+            clase="oferta_falsa",
+            titulo=CLASES["oferta_falsa"] + " (aproximado)",
+            texto=(
+                f"Ninguna otra tienda vende este mismo producto. {rango} El precio de lista"
+                f" de {_pesos(oferta.precio_lista)} está por encima de casi todo el mercado,"
+                f" y {_pesos(oferta.precio)} es un precio corriente: el {anunciado:.0f}%"
+                " anunciado se calcula sobre una lista fuera de rango. Sin confirmar: se"
+                " compara con productos parecidos, no con el mismo."
+            ),
+            precio_real=None,
+            descuento_anunciado_pct=anunciado,
+            lista_inflada_pct=round((oferta.precio_lista - mercado.p90) / mercado.p90 * 100, 1),
+            confianza="aproximada",
+            evidencias=[Evidencia(
+                "categoria", mercado.mediana,
+                f"{mercado.productos} productos de {mercado.tiendas} tiendas en la misma búsqueda",
+                "aproximada", "precios de productos parecidos en la búsqueda",
+            )],
+        )
+    if oferta.precio < mercado.p25:
+        posicion = "está por debajo de ese rango; puede ser una oferta o un producto más sencillo"
+    elif oferta.precio <= mercado.p75:
+        posicion = "está dentro de ese rango"
+    else:
+        posicion = "está por encima de ese rango"
+    return Veredicto(
+        "sin_referencia", CLASES["sin_referencia"],
+        f"La tienda anuncia {anunciado:.0f}% de descuento, pero ninguna otra tienda vende este"
+        f" mismo producto y no hay historial para comprobarlo. {rango} Este precio {posicion}.",
+        descuento_anunciado_pct=anunciado,
+    )
+
+
 def evaluar(
     oferta: Oferta,
     otras_tiendas: list[Oferta],
@@ -270,12 +335,15 @@ def evaluar(
     internacional: Internacional | None = None,
     variantes: list[Oferta] | None = None,
     comparables: list[Oferta] | None = None,
+    mercado: Mercado | None = None,
 ) -> Veredicto:
     """Decide qué tan real es la oferta comparándola con el precio real estimado."""
     anunciado = oferta.descuento_pct
     evidencias = reunir_evidencias(
         oferta, otras_tiendas, historial, internacional, variantes, comparables
     )
+    if not evidencias and mercado and anunciado >= DESCUENTO_ANUNCIADO_MINIMO:
+        return _segun_el_mercado(oferta, mercado)
     if not evidencias:
         aviso = (
             f"La tienda anuncia {anunciado:.0f}% de descuento, pero no hay con qué comprobarlo:"

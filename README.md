@@ -56,6 +56,12 @@ En orden de confianza:
    memoria y almacenamiento (3 tiendas o más). Es la evidencia más débil: el veredicto
    sale "(aproximado)". En `verificar` se hace además una búsqueda aparte de equipos con
    ese procesador en todas las tiendas.
+6. **Mercado de la búsqueda:** para productos genéricos que nadie más vende (colchones,
+   sillas, bicicletas), se mira cómo se reparten los precios de lo que ofrecen las
+   demás tiendas en esa búsqueda (12 productos de 4 tiendas o más). Solo se pronuncia
+   en el caso claro: si el precio de lista supera lo que cobra el 90% del mercado y el
+   precio con descuento es corriente, es una "oferta engañosa (aproximada)". En lo
+   demás dice dónde cae el precio frente al rango típico, sin juzgar.
 
 ### Cómo se reconoce el mismo producto
 
@@ -117,16 +123,19 @@ hasta 12 productos.
 ### Qué tanto comprueba, por categoría
 
 `docs/evaluacion-veredictos.md` tiene la corrida completa (se repite con
-`uv run python scripts/evaluar_veredictos.py`). En resumen, sobre las primeras 20
-ofertas de 15 búsquedas, sin historial previo:
+`uv run python scripts/evaluar_veredictos.py`). Sobre 15 búsquedas reales y sin historial
+previo, de 3.298 ofertas con descuento anunciado se comprobaron 1.874 (57%), y de esas
+solo 274 (15%) eran descuentos reales.
 
-- **Productos con marca y modelo** (celulares, portátiles, televisores, neveras,
-  lavadoras, consolas): se comprueba entre 70% y 100% de las ofertas con descuento.
-- **Herramientas, calzado y perfumes:** entre 33% y 56%.
-- **Productos genéricos o de marca local** (colchones, sillas, bicicletas, morrales):
-  entre 0% y 16%. No existe "el mismo producto" en otra tienda ni afuera, así que no
-  hay evidencia independiente; ahí el motor dice "sin verificar" y da el contexto de
-  la búsqueda. El historial propio es lo único que los irá cubriendo.
+- **Productos con marca y modelo** (celulares, neveras, lavadoras, audífonos, consolas,
+  televisores): se comprueba entre 69% y 95% de las ofertas de la búsqueda.
+- **Portátiles, herramientas, calzado, colchones:** entre 32% y 42%.
+- **Productos genéricos o de marca local** (sillas, bicicletas, camisetas, morrales,
+  perfumes): entre 14% y 26%. No existe "el mismo producto" en otra tienda ni afuera.
+  Para ellos queda el juicio por mercado de la búsqueda (ver abajo) y el historial.
+
+Las más baratas de una búsqueda amplia son las más difíciles de comprobar, porque suelen
+ser productos que solo vende una tienda.
 
 ### Límites que conviene conocer
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from statistics import quantiles
 
 from ofertas import identidad, internacional, motor, veredicto
 from ofertas.conectores import navegador
@@ -153,6 +154,13 @@ async def verificar(
                     juicio = veredicto.evaluar(
                         oferta, otras, oferta.historial, referencia, variantes, comparables
                     )
+            if juicio.clase == "sin_referencia":
+                # Último recurso para lo que nadie más vende: el mercado de la búsqueda.
+                mercado = mercado_para(oferta, resultado.ofertas)
+                if mercado:
+                    juicio = veredicto.evaluar(
+                        oferta, otras, oferta.historial, referencia, variantes, mercado=mercado
+                    )
             datos = juicio.a_dict()
             datos["coincidencia_entre_tiendas"] = grupo.via
             if referencia:
@@ -172,6 +180,29 @@ async def verificar(
             oferta.veredicto = datos
     _agregar_contexto(resultado.ofertas)
     return grupos, avisos
+
+
+# Para describir el mercado de una búsqueda hacen falta suficientes productos y tiendas.
+MIN_PRODUCTOS_MERCADO = 12
+MIN_TIENDAS_MERCADO = 4
+
+
+def mercado_para(oferta: Oferta, ofertas: list[Oferta]) -> veredicto.Mercado | None:
+    """Reparto de precios de lo que venden las demás tiendas en la misma búsqueda."""
+    propia = identidad.familia(oferta.tienda_id)
+    usado = identidad.es_usado(oferta.nombre)
+    otras = [
+        o for o in ofertas
+        if identidad.familia(o.tienda_id) != propia and identidad.es_usado(o.nombre) == usado
+    ]
+    tiendas = {identidad.familia(o.tienda_id) for o in otras}
+    if len(otras) < MIN_PRODUCTOS_MERCADO or len(tiendas) < MIN_TIENDAS_MERCADO:
+        return None
+    cortes = quantiles((o.precio for o in otras), n=20, method="inclusive")
+    return veredicto.Mercado(
+        productos=len(otras), tiendas=len(tiendas),
+        p25=cortes[4], mediana=cortes[9], p75=cortes[14], p90=cortes[17],
+    )
 
 
 # Ofertas comprobadas que hacen falta para hablar de una proporción.
