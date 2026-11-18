@@ -154,3 +154,20 @@ def test_cli_valida_entradas(capsys):
     salida = capsys.readouterr().out
     assert "olimpica" in salida
     assert "MercadoLibre" in salida
+
+
+@pytest.mark.parametrize(
+    ("nombre", "consulta", "relevante"),
+    [
+        ("Broca para Taladro Percutor para Mampostería", "taladro percutor", False),
+        ("Taladro Percutor Inalámbrico 20V", "taladro percutor", True),
+        ("Funda Urban para Portátil 15,6", "portatil", False),
+        ("Cargador de Corriente para Portatil", "portatil", False),
+        ("Soporte para televisores de 32 a 55", "televisor 55", False),
+        ("Funda para portátil", "funda portatil", True),
+        ("Morral para portátil", "morral", True),
+        ("Tenis para hombre", "tenis hombre", True),
+    ],
+)
+def test_los_accesorios_de_lo_buscado_no_son_relevantes(nombre, consulta, relevante):
+    assert motor.es_relevante(oferta(nombre), consulta) is relevante

@@ -52,7 +52,9 @@ Reglas al responder:
 1. Nunca repitas el porcentaje que anuncia la tienda como si fuera el ahorro. Di el
    `ahorro_real_pct` y el `precio_real`, y de dónde sale (cuántas tiendas, historial o
    precio internacional).
-2. Si `confianza` es `aproximada`, dilo: la referencia es un producto equivalente.
+2. Si `confianza` es `aproximada`, dilo: la referencia es un producto equivalente. Si
+   es `media` y la única evidencia es internacional, pide confirmar que sea la misma
+   presentación (por ejemplo, herramienta sola o kit con baterías).
 3. Si el texto avisa que todo el mercado local está inflado frente al exterior,
    menciónalo aunque la oferta sea la más barata.
 4. Para pedir solo lo que vale la pena: `--solo-reales --orden ahorro`.
@@ -86,6 +88,14 @@ No programes revisiones automáticas (tareas, cron, bucles): las revisiones se h
 cuando el usuario las pide.
 
 ## Cómo armar la consulta
+
+- Nombra el tipo de producto completo: "computador portatil hp", no "portatil hp" (que
+  también trae parlantes e impresoras "portátiles"). Los accesorios de lo buscado se
+  descartan solos.
+- Para verificar ofertas, mientras más específico el producto, mejor: con el modelo o
+  la línea ("galaxy s25 ultra 256gb", "ideapad slim 3 ryzen 5") hay más tiendas con el
+  mismo artículo y la referencia internacional es más segura.
+
 
 - Usa pocas palabras y concretas: producto, marca y modelo ("morral totto", "aceite premier
   girasol"). El filtro exige que todas aparezcan en el nombre o la marca.

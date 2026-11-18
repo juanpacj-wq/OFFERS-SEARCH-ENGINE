@@ -32,8 +32,11 @@ _UNIDADES = {
     "pulgadas": "in", "pulgada": "in", "pulg": "in", "in": "in", "inch": "in", "inches": "in",
     '"': "in", "''": "in", "”": "in", "″": "in", "¨": "in",
 }
+# El número no puede venir pegado a una "x": en "2x3 pulgadas" el 3 es parte de una
+# dimensión, no una medida suelta.
 _RE_MEDIDA = re.compile(
-    r"(\d+(?:[.,]\d+)?)\s*(gb|tb|mb|ml|litros|lt|kg|gr|mah|hz|pulgadas|pulgada|pulg|inches|inch"
+    r"(?<![\dx.,])(\d+(?:[.,]\d+)?)\s*"
+    r"(gb|tb|mb|ml|litros|lt|kg|gr|mah|hz|pulgadas|pulgada|pulg|inches|inch"
     r"|in\b|l\b|g\b|w\b|\"|''|”|″|¨)",
     re.I,
 )
@@ -77,6 +80,7 @@ ACCESORIOS = frozenset(
     funda estuche forro carcasa protector vidrio mica cargador cable adaptador soporte base
     repuesto control correa pulso case cover charger adapter stand mount strap protector
     replacement sleeve skin screen film holder dock compatible bundle remote backlight
+    board legs wire strip part parts repair
     """.split()
 )
 
@@ -187,13 +191,51 @@ def es_accesorio(texto: str) -> bool:
 
 USADOS = frozenset(
     ["reacondicionado", "reacondicionada", "refurbished", "renewed", "usado", "usada",
-     "seminuevo", "seminueva", "exhibicion", "openbox", "remanufacturado", "outlet", "demo"]
+     "seminuevo", "seminueva", "exhibicion", "openbox", "remanufacturado", "outlet", "demo",
+     "used", "preowned", "pre-owned", "restored", "certified"]
 )
+
+
+# Palabras con las que un anuncio menciona un modelo sin ser ese producto.
+_RE_PARA_OTRO = re.compile(r"\b(?:compatible|replacement|bundle|fits?|for|para|repuesto)\b")
+
+
+def menciona_sin_ser(titulo: str) -> bool:
+    """El título habla de un producto ajeno: "Remote for UN55CU7000", "TV Bundle with..."."""
+    return bool(_RE_PARA_OTRO.search(normalizar(titulo)))
+
+
+# Sustantivos que, al comienzo del nombre, indican que es un accesorio de otra cosa.
+ACCESORIOS_LOCALES = frozenset(
+    ["funda", "estuche", "forro", "carcasa", "protector", "vidrio", "mica", "cargador",
+     "cable", "adaptador", "soporte", "repuesto", "control", "correa", "pulso", "broca",
+     "brocas", "portabrocas"]
+)
+_RE_PARA = re.compile(r"\bpara\s+(?:(?:el|la|los|las|un|una|tu|su)\s+)?((?:\w+\s+){0,2}\w+)")
+
+
+def es_accesorio_de(nombre: str, consulta: str) -> bool:
+    """El producto es un accesorio de lo que se busca, no lo que se busca.
+
+    "Broca para Taladro Percutor" no es un taladro; "Funda para portátil Lenovo" no es
+    un portátil. Si el nombre empieza por lo que se busca ("Morral para portátil" al
+    buscar un morral) o la consulta pide el accesorio, no aplica.
+    """
+    buscadas = set(palabras(consulta))
+    buscadas |= {p[:-1] for p in buscadas if p.endswith("s") and len(p) > 3}
+    del_nombre = palabras(nombre)
+    if not del_nombre or del_nombre[0] in buscadas or "para" in buscadas:
+        return False
+    if del_nombre[0] in ACCESORIOS_LOCALES:
+        return True
+    return any(
+        buscadas & set(despues.split()) for despues in _RE_PARA.findall(normalizar(nombre))
+    )
 
 
 def es_usado(texto: str) -> bool:
     """Reacondicionado, usado o de exhibición: no se compara con el producto nuevo."""
-    return bool(USADOS.intersection(palabras(texto)))
+    return bool(USADOS.intersection(palabras(texto))) or "open box" in normalizar(texto)
 
 
 def misma_condicion(a: str, b: str) -> bool:

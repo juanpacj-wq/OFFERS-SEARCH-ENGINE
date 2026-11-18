@@ -10,6 +10,7 @@ import unicodedata
 import httpx
 import truststore
 
+from ofertas import identidad
 from ofertas.conectores import (
     alkosto,
     falabella,
@@ -75,9 +76,14 @@ def normalizar(texto: str) -> str:
 def es_relevante(oferta: Oferta, consulta: str) -> bool:
     """Verdadero si todas las palabras de la consulta están en nombre, marca o categoría.
 
+    También descarta los accesorios de lo buscado ("broca para taladro" al buscar un
+    taladro), que de otro modo copan los primeros puestos por ser lo más barato.
+
     Los buscadores de las tiendas devuelven productos apenas relacionados; sin este
     filtro, ordenar por precio pondría de primeras accesorios baratos.
     """
+    if identidad.es_accesorio_de(oferta.nombre, consulta):
+        return False
     texto = normalizar(f"{oferta.nombre} {oferta.marca} {oferta.categoria}")
     for palabra in normalizar(consulta).split():
         if len(palabra) < 2:

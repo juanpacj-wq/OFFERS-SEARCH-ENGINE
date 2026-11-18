@@ -11,8 +11,8 @@ from ofertas.modelos import Oferta, Resultado
 from ofertas.tiendas import seleccionar
 
 # Cuántos productos distintos se investigan afuera en una búsqueda normal y en una profunda.
-GRUPOS_NORMAL = 3
-GRUPOS_PROFUNDO = 8
+GRUPOS_NORMAL = 10
+GRUPOS_PROFUNDO = 12
 
 
 def ordenar_para_informe(grupos: list[Grupo]) -> list[Grupo]:
@@ -29,14 +29,26 @@ def _grupos_a_investigar(
 ) -> list[Grupo]:
     """Los productos de las ofertas que se van a mostrar, en orden y sin repetir."""
     de_oferta = {id(o): g for g in grupos for o in g.ofertas}
-    elegidos: list[Grupo] = []
+    candidatos: list[Grupo] = []
     for oferta in ofertas[:mostradas]:
         grupo = de_oferta[id(oferta)]
-        if grupo not in elegidos and internacional.vale_la_pena(grupo):
-            elegidos.append(grupo)
-        if len(elegidos) >= maximo:
-            break
-    return elegidos
+        if grupo not in candidatos and internacional.vale_la_pena(grupo):
+            candidatos.append(grupo)
+    # Primero los que no tienen con qué compararse en Colombia: ahí el precio de afuera
+    # es la única evidencia. sorted es estable, así que se conserva el orden mostrado.
+    return sorted(candidatos, key=_tiene_mercado_local)[:maximo]
+
+
+def _tiene_mercado_local(grupo: Grupo) -> bool:
+    """Tres o más voces independientes: cualquier oferta tiene dos tiendas con qué compararse."""
+    voces: set[str] = set()
+    independientes = 0
+    for oferta in sorted(grupo.ofertas, key=lambda o: o.precio):
+        propias = identidad.voces(oferta)
+        if not propias & voces:
+            independientes += 1
+        voces |= propias
+    return independientes >= 3
 
 
 async def _candidatos_de_amazon(grupos: list[Grupo], trm: float) -> dict[int, list[dict]]:

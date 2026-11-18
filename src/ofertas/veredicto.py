@@ -39,6 +39,11 @@ MARGEN_IMPORTACION = 0.30
 # Si todo el mercado local supera el tope internacional por más de esto, se advierte.
 ALERTA_SOBRE_INTERNACIONAL = 0.15
 
+# Qué tanto pesa el precio de afuera según qué tan seguro es que sea el mismo producto.
+# Con el mismo modelo todavía puede cambiar la presentación (una herramienta sola y su
+# kit con baterías comparten modelo), así que por sí solo no pasa de evidencia media.
+_FUERZA_INTERNACIONAL = {"exacto": "fuerte", "modelo": "media", "equivalente": "aproximada"}
+
 CLASES = {
     "descuento_real": "Descuento real",
     "oferta_falsa": "Oferta engañosa",
@@ -199,7 +204,7 @@ def reunir_evidencias(
             f" {_pesos(internacional.con_iva)} con IVA, y hasta"
             f" {_pesos(internacional.tope_normal)} con costos de importación"
             f" ({', '.join(internacional.fuentes)})",
-            "fuerte" if internacional.confiable else "aproximada",
+            _FUERZA_INTERNACIONAL[internacional.coincidencia],
             f"afuera vale US$ {internacional.precio_usd:,.2f}, que con IVA e importación"
             f" son unos {_pesos(internacional.normal_esperado)}",
         ))
@@ -296,7 +301,11 @@ def evaluar(
         titulo += " (aproximado)"
         texto += " Sin confirmar: la referencia es un producto equivalente, no el idéntico."
     elif principal.fuerza == "media" and len(evidencias) == 1:
-        texto += " La evidencia es limitada."
+        texto += (
+            " La evidencia es limitada: confirma que sea la misma presentación."
+            if principal.tipo == "internacional"
+            else " La evidencia es limitada."
+        )
 
     return Veredicto(
         clase=clase,

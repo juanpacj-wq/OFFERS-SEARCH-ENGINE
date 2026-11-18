@@ -68,11 +68,11 @@ def presentar(resultado: Resultado, maximo: int) -> str:
             for o in grupo:
                 lineas.append(f"    {pesos(o.precio):>12}  {o.tienda}")
 
-    conteo = verificacion.resumen(resultado.ofertas)
+    conteo = verificacion.resumen(ofertas)
     if conteo:
         lineas.append("")
         lineas.append(
-            "De las ofertas con descuento anunciado: "
+            "De las ofertas mostradas con descuento anunciado: "
             + ", ".join(
                 f"{n} {veredicto.nombre_de(clase, n)}"
                 for clase, n in sorted(conteo.items(), key=lambda par: -par[1])

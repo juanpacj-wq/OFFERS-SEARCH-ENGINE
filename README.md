@@ -53,9 +53,17 @@ En orden de confianza:
 - Afuera: los códigos de barras casi nunca coinciden, porque los modelos son
   regionales. Se busca el modelo sin su sufijo de país ("UN55CU7000KXZL" se busca como
   "UN55CU7000" y aparece como "UN55CU7000FXZA" en EE. UU.) y, si no, por marca, familia
-  y especificaciones. Cada referencia dice qué tan segura es: `exacto`, `modelo` o
-  `equivalente`. Un veredicto apoyado solo en un equivalente se marca "(aproximado)" y
-  no cuenta para `--solo-reales`.
+  y especificaciones. Cada referencia dice qué tan segura es:
+  - `exacto`: mismo código de barras o número de artículo. Evidencia fuerte.
+  - `modelo`: mismo código de modelo. Evidencia media por sí sola, porque la
+    presentación puede cambiar (una herramienta sola y su kit comparten modelo).
+  - `equivalente`: misma marca, línea, capacidad y procesador. El veredicto se marca
+    "(aproximado)" y no cuenta para `--solo-reales`.
+- Un anuncio que solo menciona el modelo ("control para...", "paquete con...") no
+  cuenta, y tampoco se comparan usados o reacondicionados con nuevos.
+- Los nombres de aquí traen palabras en español que no existen en un título en inglés;
+  la equivalencia se mide solo con las palabras que sí aparecen en los resultados de
+  afuera (marca, línea y números).
 
 ### Veredictos
 
@@ -72,23 +80,31 @@ importar el producto, y cuando una oferta está por debajo del precio internacio
 
 ### Fuentes internacionales
 
+- Bing Shopping para EE. UU.: la fuente principal. Sirve para cualquier marca, trae
+  comercios de todo tipo y responde en menos de un segundo.
 - Tiendas de marca en EE. UU.: Lenovo, Samsung e IKEA (IKEA usa el mismo número de
-  artículo en todos los países, así que la coincidencia es exacta).
-- UPCitemdb: precios de comercios de EE. UU. Su plan gratuito admite unas 6 consultas
-  por minuto, así que en una búsqueda normal se hace como mucho una y `verificar` espera
-  lo necesario.
-- Amazon, con `verificar --navegador`.
+  artículo en todos los países, así que la coincidencia es exacta). Si la tienda de la
+  marca ya da el mismo producto, no se pregunta a nadie más.
+- UPCitemdb: solo en `verificar` y para lo que las otras fuentes no resolvieron. Su
+  plan gratuito admite unas 6 consultas por minuto; si responde que se excedió, no se le
+  insiste durante 5 minutos.
+- Amazon, con `verificar --navegador`. En la práctica aporta poco: muestra pocos
+  resultados con precio para envío a Colombia.
 - TRM: datos.gov.co, con respaldo en open.er-api.com.
 
 Lo consultado afuera se guarda 7 días en la base local. Una búsqueda normal investiga
-los 3 primeros productos y tarda entre 5 y 7 segundos en total; `verificar` investiga
-hasta 8.
+hasta 10 productos de los que se muestran, empezando por los que no tienen con qué
+compararse en Colombia, y tarda entre 5 y 10 segundos en total (casi todo es la
+búsqueda en las tiendas). `verificar` investiga hasta 12.
 
 ### Límites que conviene conocer
 
 - Productos de marcas locales (Totto, Vélez) no tienen precio internacional: se juzgan
   con el mercado local y el historial.
-- Si un producto solo lo vende una tienda y no hay historial, queda "sin verificar".
+- Si un producto solo lo vende una tienda, no hay historial y afuera no existe el
+  mismo modelo ni un equivalente, queda "sin verificar". Pasa sobre todo con portátiles
+  de configuración regional (el motor no acepta como equivalente uno con otro
+  procesador o memoria) y con marcas que solo se venden en Colombia.
 - El margen de importación es una estimación general; el arancel real cambia por
   categoría.
 - Las constantes del juicio están en `src/ofertas/veredicto.py`.
@@ -112,6 +128,12 @@ uv run ofertas buscar "morral" --sin-historial         # sin leer ni guardar his
 
 El historial solo crece con las búsquedas que tú pides. `ofertas revisar` también se
 corre a mano: el motor no consulta las tiendas por su cuenta ni de forma programada.
+
+## Relevancia
+
+Al buscar un producto se descartan sus accesorios: "broca para taladro" no aparece al
+buscar un taladro, ni "funda para portátil" al buscar un portátil. Si buscas el
+accesorio ("funda portátil"), sí aparece.
 
 ## Qué devuelve
 

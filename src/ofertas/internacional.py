@@ -17,7 +17,9 @@ búsqueda no vuelve a preguntar afuera.
 from __future__ import annotations
 
 import asyncio
+import html
 import json
+import re
 import sqlite3
 import time
 from datetime import UTC, datetime, timedelta
@@ -39,6 +41,8 @@ VIGENCIA_OFERTA_UPC = timedelta(days=540)
 # El precio de afuera (con IVA) debe parecerse al local; si no, es otro producto.
 RAZON_MINIMA, RAZON_MAXIMA = 0.35, 2.5
 COBERTURA_MINIMA = 0.6
+# Palabras del nombre (sin la marca) que deben coincidir para llamarlo equivalente.
+MIN_PALABRAS_COMUNES = 2
 # Desde este largo, un código de modelo suele llevar sufijo de país.
 LARGO_MODELO_REGIONAL = 10
 # Por debajo de este precio no vale la pena investigar afuera.
@@ -57,6 +61,13 @@ URL_SAMSUNG = (
     "?query={q}&pageSize=20&currentPage=0"
     "&fields=products(code,name,price(value)),pagination"
 )
+URL_BING = "https://www.bing.com/shop?q={q}&setmkt=en-US&setlang=en-US&cc=US"
+# Si UPCitemdb responde que se excedió el límite, no se le vuelve a preguntar en este lapso.
+CASTIGO_UPC_SEGUNDOS = 300
+_RE_BING_TARJETA = re.compile(r'class="br-item')
+_RE_BING_TITULO = re.compile(r'class="br-title[^"]*"[^>]*>\s*<span title="([^"]+)"')
+_RE_BING_PRECIO = re.compile(r'class="pd-price[^"]*"[^>]*>.*?\$(\d[\d,]*(?:\.\d\d)?)', re.S)
+_RE_BING_ENLACE = re.compile(r'class="br-titlelink[^"]*" href="([^"]+)"')
 URL_IKEA = "https://sik.search.blue.cdtapps.com/us/en/search-result-page?q={q}&size=5&types=PRODUCT"
 
 
@@ -171,6 +182,27 @@ def consulta_por_modelo(grupo: Grupo) -> str | None:
     return modelo[: max(8, len(modelo) - 4)]
 
 
+def consultas_generales(grupo: Grupo) -> list[str]:
+    """Consultas para un buscador de comercios, de la más precisa a la más amplia.
+
+    Primero la marca con el modelo (sin sufijo de país si es largo); si eso no da nada,
+    la marca con la familia, la capacidad y el procesador.
+    """
+    marca = grupo.marca
+    consultas = []
+    modelos = sorted(grupo.modelos, key=len)
+    if modelos:
+        modelo = consulta_por_modelo(grupo) or modelos[-1]
+        consultas.append(f"{marca} {modelo}".strip())
+    procesador = identidad.procesador(grupo.principal.nombre)
+    legible = {"intel": "core i", "ryzen": "ryzen "}
+    cpu = next(
+        (f"{legible[k]}{procesador[len(k):]}" for k in legible if procesador.startswith(k)), ""
+    )
+    consultas.append(f"{consulta_para(grupo)} {cpu}".strip())
+    return consultas
+
+
 def vale_la_pena(grupo: Grupo) -> bool:
     """Descarta lo que no tiene sentido comparar afuera: barato o sin marca reconocible."""
     if grupo.precio_mediano < PRECIO_MINIMO_COP:
@@ -181,8 +213,21 @@ def vale_la_pena(grupo: Grupo) -> bool:
 # --- calificación de candidatos ---------------------------------------------
 
 
-def calificar(grupo: Grupo, candidato: dict, trm: float) -> tuple[str, float] | None:
-    """Dice qué tan seguro es que el candidato sea el producto del grupo, o None si no lo es."""
+def vocabulario_de(candidatos: list[dict]) -> frozenset[str]:
+    """Todas las palabras que aparecen en los títulos de un lote de candidatos."""
+    return frozenset(p for c in candidatos for p in identidad.palabras(c.get("titulo") or ""))
+
+
+def calificar(
+    grupo: Grupo, candidato: dict, trm: float, vocabulario: frozenset[str] | None = None
+) -> tuple[str, float] | None:
+    """Dice qué tan seguro es que el candidato sea el producto del grupo, o None si no lo es.
+
+    `vocabulario` son las palabras del lote de resultados de afuera. Los nombres de aquí
+    traen palabras en español ("fotográfica", "inalámbrico") que jamás aparecen en un
+    título en inglés; para no castigar eso, la coincidencia se mide solo con las palabras
+    del nombre que existen en ese vocabulario (marcas, líneas y números, que no cambian).
+    """
     precio = a_numero(candidato.get("precio_usd"))
     if precio <= 0:
         return None
@@ -191,7 +236,7 @@ def calificar(grupo: Grupo, candidato: dict, trm: float) -> tuple[str, float] | 
     if not RAZON_MINIMA <= razon <= RAZON_MAXIMA:
         return None
     principal = grupo.principal
-    if not identidad.misma_condicion(titulo, principal.nombre):
+    if identidad.es_usado(titulo) != identidad.es_usado(principal.nombre):
         return None
 
     ean = str(candidato.get("ean") or "").lstrip("0")
@@ -200,12 +245,17 @@ def calificar(grupo: Grupo, candidato: dict, trm: float) -> tuple[str, float] | 
     codigos = identidad.codigos_de_modelo(titulo)
     if candidato.get("codigo"):
         codigos.add(str(candidato["codigo"]).upper())
-    if any(
+    # Con el mismo código de modelo es el mismo producto aunque los nombres difieran,
+    # salvo que el anuncio solo lo mencione ("control para...", "paquete con...").
+    de_la_marca = bool(candidato.get("de_marca"))
+    if (de_la_marca or not identidad.menciona_sin_ser(titulo)) and any(
         identidad.mismo_modelo(a, b) or identidad.variante_regional(a, b)
         for a in grupo.modelos
         for b in codigos
     ):
         return "modelo", 1.0
+    if identidad.es_accesorio(titulo) != identidad.es_accesorio(principal.nombre):
+        return None
     # Afuera el modelo suele venir sin prefijo ni sufijo regional: "CU7000" es el
     # "UN55CU7000KXZL" de Colombia. Vale si además coincide el tamaño.
     tamanos_local = {m for m in identidad.medidas(principal.nombre) if m.endswith("in")}
@@ -224,7 +274,10 @@ def calificar(grupo: Grupo, candidato: dict, trm: float) -> tuple[str, float] | 
         p for p in identidad.distintivos(principal.nombre, "")
         if p != marca and p not in {m.lower() for m in grupo.modelos}
     ]
-    if not propias:
+    if vocabulario is not None:
+        propias = [p for p in propias if p in vocabulario]
+    # Con una sola palabra en común ("galaxy") no se puede afirmar que sea equivalente.
+    if len(propias) < MIN_PALABRAS_COMUNES:
         return None
     # Las variantes deben coincidir en ambos sentidos: un S25 no es un S25 Ultra.
     variantes = identidad.VARIANTES
@@ -251,8 +304,9 @@ def calificar(grupo: Grupo, candidato: dict, trm: float) -> tuple[str, float] | 
 def resumir(grupo: Grupo, candidatos: list[dict], trm: float) -> Internacional | None:
     """Convierte los candidatos válidos en una referencia: la mediana de los más seguros."""
     calificados = []
+    vocabulario = vocabulario_de(candidatos)
     for candidato in candidatos:
-        nota = calificar(grupo, candidato, trm)
+        nota = calificar(grupo, candidato, trm, vocabulario)
         if nota:
             calificados.append((ORDEN[nota[0]], -nota[1], nota[0], candidato))
     if not calificados:
@@ -379,6 +433,42 @@ async def fuente_upcitemdb(cliente: httpx.AsyncClient, grupo: Grupo, consulta: s
     return salida
 
 
+async def fuente_bing(cliente: httpx.AsyncClient, grupo: Grupo, consulta: str) -> list[dict]:
+    """Bing Shopping para EE. UU.: comercios de todo tipo, cualquier marca, en dólares."""
+    respuesta = await pedir(
+        cliente, URL_BING.format(q=quote(consulta, safe="")),
+        headers={"Accept": "text/html", "Accept-Language": "en-US,en;q=0.9"},
+    )
+    salida = []
+    for trozo in _RE_BING_TARJETA.split(respuesta.text)[1:]:
+        titulo, precio = _RE_BING_TITULO.search(trozo), _RE_BING_PRECIO.search(trozo)
+        if not (titulo and precio):
+            continue
+        enlace = _RE_BING_ENLACE.search(trozo)
+        salida.append({
+            "fuente": "Bing Shopping (comercios de EE. UU.)",
+            "titulo": html.unescape(titulo.group(1)),
+            "precio_usd": a_numero(precio.group(1).replace(",", "")),
+            "url": "https://www.bing.com" + html.unescape(enlace.group(1)) if enlace else "",
+        })
+    return salida
+
+
+async def _bing(
+    cliente: httpx.AsyncClient, conexion: sqlite3.Connection, grupo: Grupo, trm: float
+) -> tuple[list[dict], str | None]:
+    """Prueba las consultas generales en orden y se queda con la primera que sirva."""
+    candidatos: list[dict] = []
+    aviso = None
+    for consulta in consultas_generales(grupo):
+        hallados, aviso = await _consultar(cliente, conexion, "bing", fuente_bing, grupo, consulta)
+        candidatos += hallados
+        vocabulario = vocabulario_de(hallados)
+        if any(calificar(grupo, c, trm, vocabulario) for c in hallados):
+            break
+    return candidatos, aviso
+
+
 FUENTES_DE_MARCA = {"lenovo": fuente_lenovo, "samsung": fuente_samsung, "ikea": fuente_ikea}
 
 
@@ -414,14 +504,24 @@ async def _upc_con_pausa(
 ) -> tuple[list[dict], str | None]:
     """UPCitemdb respetando su límite: espera si se le permite, o lo deja para después."""
     if _leer_cache(conexion, "upcitemdb", consulta) is None:
-        ultimo = (_leer_ajuste(conexion, "ultimo_upc") or {}).get("momento", 0)
-        falta = PAUSA_UPC_SEGUNDOS - (time.time() - ultimo)
+        estado = _leer_ajuste(conexion, "ultimo_upc") or {}
+        if time.time() < estado.get("castigado_hasta", 0):
+            return [], None  # ya dijo que se excedió el límite: no se insiste
+        falta = PAUSA_UPC_SEGUNDOS - (time.time() - estado.get("momento", 0))
         if falta > 0:
             if not esperar:
                 return [], None  # en una búsqueda normal no se espera: queda para después
             await asyncio.sleep(falta)
         _guardar_ajuste(conexion, "ultimo_upc", {"momento": time.time()})
-    return await _consultar(cliente, conexion, "upcitemdb", fuente_upcitemdb, grupo, consulta)
+    candidatos, aviso = await _consultar(
+        cliente, conexion, "upcitemdb", fuente_upcitemdb, grupo, consulta
+    )
+    if aviso and "HTTP 429" in aviso:
+        _guardar_ajuste(conexion, "ultimo_upc", {
+            "momento": time.time(), "castigado_hasta": time.time() + CASTIGO_UPC_SEGUNDOS,
+        })
+        aviso = "UPCitemdb alcanzó su límite de consultas; se usaron las demás fuentes."
+    return candidatos, aviso
 
 
 async def investigar(
@@ -434,10 +534,11 @@ async def investigar(
 ) -> tuple[dict[int, Internacional], list[str]]:
     """Busca el precio internacional de cada grupo.
 
-    Devuelve las referencias por `id(grupo)` y la lista de avisos (fuentes que fallaron
-    o se omitieron). En modo normal UPCitemdb solo se consulta si no hay que esperar;
-    en modo profundo se espera lo necesario. `extra` permite sumar candidatos de otra
-    fuente ya consultada (Amazon por navegador).
+    Devuelve las referencias por `id(grupo)` y la lista de avisos (fuentes que fallaron).
+    Para cada producto se consultan a la vez la tienda de su marca, si la hay, y Bing
+    Shopping. UPCitemdb, que es lento, solo se usa en modo profundo y para lo que las
+    otras fuentes no resolvieron. `extra` permite sumar candidatos de otra fuente ya
+    consultada (Amazon por navegador).
     """
     trm = await obtener_trm(cliente, conexion)
     if not trm:
@@ -463,18 +564,25 @@ async def investigar(
         elif por_modelo:
             # Sin tienda de marca, lo más preciso para los comercios es el modelo.
             consulta = por_modelo
+        # Si la tienda de la marca ya dio el mismo producto, no hace falta preguntar más.
+        previa = resumir(grupo, candidatos, trm)
+        if not (previa and previa.confiable):
+            hallados, aviso = await _bing(cliente, conexion, grupo, trm)
+            candidatos += hallados
+            if aviso and aviso not in avisos:
+                avisos.append(aviso)
         return grupo, consulta, candidatos
 
     for grupo, consulta, candidatos in await asyncio.gather(*(de_marca(g) for g in grupos)):
         referencia = resumir(grupo, candidatos, trm)
-        if referencia and referencia.confiable:
+        if referencia:
             referencias[id(grupo)] = referencia
-        else:
+        if profundo and not (referencia and referencia.confiable):
             pendientes_upc.append((grupo, consulta, candidatos))
 
-    # UPCitemdb va de a una consulta, solo para lo que la fuente de marca no resolvió.
+    # UPCitemdb va de a una consulta, solo en modo profundo y para lo no resuelto.
     for grupo, consulta, candidatos in pendientes_upc:
-        hallados, aviso = await _upc_con_pausa(cliente, conexion, grupo, consulta, profundo)
+        hallados, aviso = await _upc_con_pausa(cliente, conexion, grupo, consulta, True)
         if aviso and aviso not in avisos:
             avisos.append(aviso)
         referencia = resumir(grupo, candidatos + hallados, trm)

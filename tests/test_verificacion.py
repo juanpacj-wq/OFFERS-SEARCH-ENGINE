@@ -104,7 +104,7 @@ def test_la_salida_de_texto_muestra_el_veredicto_y_el_conteo(mundo, capsys):
     assert ">> Oferta engañosa: Precio real: cerca de $1.604.950" in salida
     assert "(mediana de 2 tiendas más)" in salida
     assert "El precio de lista está inflado 100% sobre el real" in salida
-    assert "De las ofertas con descuento anunciado: 1 oferta engañosa, 1 sin verificar." in salida
+    assert "con descuento anunciado: 1 oferta engañosa, 1 sin verificar." in salida
 
 
 def test_solo_reales_descarta_enganosas_y_sin_verificar(mundo, capsys):

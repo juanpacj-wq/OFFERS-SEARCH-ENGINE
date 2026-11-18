@@ -109,12 +109,24 @@ def test_internacional_convierte_con_trm_iva_e_importacion():
 
 
 def test_internacional_confiable_decide_cuando_no_hay_mercado_local():
-    juicio = veredicto.evaluar(oferta(547000, 1200000), [], internacional=afuera(100))
+    juicio = veredicto.evaluar(oferta(547000, 1200000), [], internacional=afuera(100, "exacto"))
     assert juicio.clase == "oferta_falsa"
     assert juicio.confianza == "fuerte"
     assert "afuera vale US$ 100.00" in juicio.texto
-    barato = veredicto.evaluar(oferta(400000, 1200000), [], internacional=afuera(100))
+    barato = veredicto.evaluar(oferta(400000, 1200000), [], internacional=afuera(100, "exacto"))
     assert barato.clase == "descuento_real" and barato.favorable
+
+
+def test_mismo_modelo_afuera_por_si_solo_es_evidencia_limitada():
+    """Un kit con baterías y la herramienta sola comparten modelo: no basta para afirmar."""
+    juicio = veredicto.evaluar(oferta(310000, 440000), [], internacional=afuera(120))
+    assert juicio.clase == "descuento_real"
+    assert juicio.confianza == "media"
+    assert "confirma que sea la misma presentación" in juicio.texto
+    # Si además hay mercado local, este manda y el precio de afuera queda como contexto.
+    con_mercado = veredicto.evaluar(oferta(310000, 440000), otras(320000, 315000, 318000),
+                                    internacional=afuera(120))
+    assert (con_mercado.clase, con_mercado.confianza) == ("oferta_falsa", "fuerte")
 
 
 def test_internacional_equivalente_no_se_presenta_como_comprobado():
