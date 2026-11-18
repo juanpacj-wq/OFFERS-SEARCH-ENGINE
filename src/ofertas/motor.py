@@ -30,7 +30,10 @@ AGENTE = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"
 )
-TIEMPO_LIMITE = httpx.Timeout(40.0, connect=10.0)
+# Las páginas más pesadas (2 MB) llegan en unos 5 s; más de 20 s es una tienda caída.
+TIEMPO_LIMITE = httpx.Timeout(20.0, connect=8.0)
+# Tope por tienda sumando todas sus peticiones (las de navegador tienen el suyo).
+TOPE_POR_TIENDA = 30.0
 ORDENES = ("precio", "descuento")
 CONECTORES = {
     "vtex": vtex.buscar,
@@ -95,9 +98,19 @@ async def _buscar_en_tienda(
 ) -> tuple[list[Oferta], EstadoTienda]:
     inicio = time.perf_counter()
     try:
-        ofertas, recibidos, total = await CONECTORES[tienda.plataforma](
+        conector = CONECTORES[tienda.plataforma](
             cliente, tienda, consulta, limite, incluir_agotados
         )
+        if tienda.plataforma == "navegador":
+            ofertas, recibidos, total = await conector
+        else:
+            ofertas, recibidos, total = await asyncio.wait_for(conector, TOPE_POR_TIENDA)
+    except TimeoutError:
+        estado = EstadoTienda(
+            tienda.id, tienda.nombre, ok=False, error="tardó demasiado en responder",
+            segundos=round(time.perf_counter() - inicio, 1),
+        )
+        return [], estado
     except Exception as exc:
         # Una tienda que cambia su formato no debe tumbar la búsqueda en las demás.
         motivo = (

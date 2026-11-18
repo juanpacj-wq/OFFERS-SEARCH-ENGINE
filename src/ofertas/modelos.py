@@ -43,6 +43,10 @@ class Oferta:
     # Categoría según la tienda. Cuenta para la relevancia: en una tienda de marca el
     # nombre es "ThinkPad E14" y la palabra "portátil" solo está en la categoría.
     categoria: str = ""
+    # Código de modelo o referencia del fabricante, cuando la tienda lo informa aparte.
+    modelo: str = ""
+    # Juicio sobre si el precio es un descuento real. Lo llena `verificacion.verificar`.
+    veredicto: dict | None = None
     # Lo que el historial local sabía de este producto antes de esta búsqueda
     # (None si es la primera vez que se ve). Lo llena `historial.anotar`.
     historial: dict | None = None
@@ -81,6 +85,8 @@ class Resultado:
     consulta: str
     ofertas: list[Oferta]
     tiendas: list[EstadoTienda]
+    # Fuentes de verificación que fallaron o se omitieron en esta búsqueda.
+    avisos: list[str] = field(default_factory=list)
 
     @property
     def tiendas_consultadas(self) -> list[EstadoTienda]:

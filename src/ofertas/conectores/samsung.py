@@ -55,6 +55,7 @@ def interpretar_producto(
         url=f"{tienda.url_base}/search/?searchvalue={quote(codigo, safe='')}",
         existencias=(int(unidades) if isinstance(unidades, int) else None) if disponible else 0,
         vendedor="Samsung",
+        modelo=codigo,
         imagen=(producto.get("picture") or {}).get("url"),
     )
 

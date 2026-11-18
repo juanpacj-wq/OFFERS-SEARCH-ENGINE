@@ -64,6 +64,7 @@ def interpretar_producto(producto: dict, tienda: Tienda) -> Oferta | None:
         vendedor=producto.get("sellerName"),
         imagen=imagenes[0] if imagenes else None,
         precio_tarjeta=tarjeta if 0 < tarjeta < precio_final else None,
+        modelo=str(producto.get("model") or "").strip(),
     )
 
 

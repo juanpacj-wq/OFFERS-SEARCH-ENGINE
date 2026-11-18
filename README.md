@@ -17,6 +17,82 @@ uv run ofertas tiendas
 Si `uv sync` falla con un error de certificado (`UnknownIssuer`), usa
 `uv sync --system-certs`: pasa en redes corporativas que inspeccionan el tráfico.
 
+## Descuentos reales y descuentos engañosos
+
+Es lo más importante del motor. Muchas tiendas inflan el precio de lista ("antes
+$3.209.900") para anunciar un descuento grande sobre lo que en realidad es el precio de
+siempre. El motor nunca usa el precio de lista de la tienda como referencia: estima el
+**precio real** con evidencia independiente y juzga cada oferta contra él.
+
+```
+uv run ofertas buscar "televisor samsung 55"                   # cada oferta trae su veredicto
+uv run ofertas buscar "televisor 55" --solo-reales --orden ahorro
+uv run ofertas verificar "galaxy s25 ultra 256gb"              # informe a fondo por producto
+uv run ofertas verificar "portatil lenovo" --navegador         # además consulta Amazon
+uv run ofertas buscar "morral" --sin-internacional             # solo tiendas e historial
+```
+
+### De dónde sale el precio real
+
+En orden de confianza:
+
+1. **Mercado local:** a cuánto venden hoy el mismo producto las demás tiendas (mediana).
+   Tiendas del mismo dueño (Alkosto, Ktronix y Alkomprar; Éxito y Carulla) y un mismo
+   vendedor repetido en varias tiendas cuentan como una sola voz.
+2. **Misma referencia en otro color:** cuando el producto idéntico no está en dos
+   tiendas más, sirve la misma referencia en otra presentación.
+3. **Historial propio:** el precio habitual del producto en esa tienda (3 observaciones
+   en 7 días o más).
+4. **Precio internacional:** lo que cuesta afuera, convertido con la TRM oficial del
+   día, más el IVA (19%) y un margen de importación (hasta 30%).
+
+### Cómo se reconoce el mismo producto
+
+- Entre tiendas colombianas: por código de barras o, si falta, por código de modelo del
+  fabricante, con la misma marca y precios comparables.
+- Afuera: los códigos de barras casi nunca coinciden, porque los modelos son
+  regionales. Se busca el modelo sin su sufijo de país ("UN55CU7000KXZL" se busca como
+  "UN55CU7000" y aparece como "UN55CU7000FXZA" en EE. UU.) y, si no, por marca, familia
+  y especificaciones. Cada referencia dice qué tan segura es: `exacto`, `modelo` o
+  `equivalente`. Un veredicto apoyado solo en un equivalente se marca "(aproximado)" y
+  no cuenta para `--solo-reales`.
+
+### Veredictos
+
+| Veredicto | Significa |
+|---|---|
+| Descuento real | El precio está al menos 8% por debajo del precio real. Dice el ahorro verdadero, que suele ser menor que el anunciado |
+| Oferta engañosa | Anuncia descuento, pero el precio es el normal del producto |
+| Más caro que lo normal | Aun con el descuento anunciado, está por encima del precio real |
+| Buen precio, Precio normal, Caro | Lo mismo para ofertas que no anuncian descuento |
+| Sin verificar | No hay evidencia independiente; se dice expresamente |
+
+Además avisa cuando todo el mercado local está por encima de lo que se explica por
+importar el producto, y cuando una oferta está por debajo del precio internacional.
+
+### Fuentes internacionales
+
+- Tiendas de marca en EE. UU.: Lenovo, Samsung e IKEA (IKEA usa el mismo número de
+  artículo en todos los países, así que la coincidencia es exacta).
+- UPCitemdb: precios de comercios de EE. UU. Su plan gratuito admite unas 6 consultas
+  por minuto, así que en una búsqueda normal se hace como mucho una y `verificar` espera
+  lo necesario.
+- Amazon, con `verificar --navegador`.
+- TRM: datos.gov.co, con respaldo en open.er-api.com.
+
+Lo consultado afuera se guarda 7 días en la base local. Una búsqueda normal investiga
+los 3 primeros productos y tarda entre 5 y 7 segundos en total; `verificar` investiga
+hasta 8.
+
+### Límites que conviene conocer
+
+- Productos de marcas locales (Totto, Vélez) no tienen precio internacional: se juzgan
+  con el mercado local y el historial.
+- Si un producto solo lo vende una tienda y no hay historial, queda "sin verificar".
+- El margen de importación es una estimación general; el arancel real cambia por
+  categoría.
+- Las constantes del juicio están en `src/ofertas/veredicto.py`.
+
 ## Historial de precios y seguimiento
 
 Cada búsqueda guarda el precio de cada producto en una base local
@@ -126,6 +202,10 @@ Sin conectar, con el motivo comprobado el 2026-11-18 (`uv run ofertas tiendas` l
 - `src/ofertas/modelos.py`: modelo común (`Oferta`, `Resultado`) y emparejamiento por EAN.
 - `src/ofertas/conectores/`: un conector por plataforma (`vtex`, `falabella`, `alkosto`,
   `lenovo`, `hp`, `samsung`, `rappi`, `woocommerce`, `ikea`, `mercadolibre`) y utilidades comunes en `base.py`.
+- `src/ofertas/identidad.py`: reconoce el mismo producto entre tiendas.
+- `src/ofertas/veredicto.py`: decide si un descuento es real (lógica pura).
+- `src/ofertas/internacional.py`: investiga el precio en el exterior y la TRM.
+- `src/ofertas/verificacion.py`: une identidad, investigación y veredicto.
 - `src/ofertas/historial.py`: base SQLite con el historial de precios y la lista de
   seguimiento.
 - `src/ofertas/motor.py`: consulta en paralelo, filtro de relevancia y orden.

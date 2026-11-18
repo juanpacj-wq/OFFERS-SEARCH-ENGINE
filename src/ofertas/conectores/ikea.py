@@ -38,6 +38,7 @@ def interpretar_producto(
         existencias=None if disponible else 0,
         moneda=venta.get("currencyCode") or "COP",
         vendedor="IKEA",
+        modelo=str(producto.get("itemNoGlobal") or producto.get("itemNo") or "").strip(),
         imagen=producto.get("mainImageUrl"),
         # Solo los dos niveles más específicos: el primero ("Sillas y mesas") es tan
         # amplio que haría pasar una mesa por silla.

@@ -8,7 +8,7 @@ import json
 import sys
 from dataclasses import asdict
 
-from ofertas import historial, motor
+from ofertas import historial, identidad, motor, veredicto, verificacion
 from ofertas.conectores import navegador
 from ofertas.entorno import cargar_env
 from ofertas.modelos import Oferta, Resultado, Tienda, agrupar_por_ean
@@ -50,6 +50,8 @@ def presentar(resultado: Resultado, maximo: int) -> str:
                 else ""
             )
             lineas.append(f"{'':>12}  {o.url}{tarjeta}")
+            if o.veredicto:
+                lineas.append(f"{'':>12}  >> {o.veredicto['titulo']}: {o.veredicto['texto']}")
             if o.historial:
                 veces = o.historial["veces_visto"]
                 lineas.append(
@@ -66,6 +68,17 @@ def presentar(resultado: Resultado, maximo: int) -> str:
             for o in grupo:
                 lineas.append(f"    {pesos(o.precio):>12}  {o.tienda}")
 
+    conteo = verificacion.resumen(resultado.ofertas)
+    if conteo:
+        lineas.append("")
+        lineas.append(
+            "De las ofertas con descuento anunciado: "
+            + ", ".join(
+                f"{n} {veredicto.nombre_de(clase, n)}"
+                for clase, n in sorted(conteo.items(), key=lambda par: -par[1])
+            )
+            + "."
+        )
     lineas.append("")
     lineas.append("Cobertura:")
     for t in resultado.tiendas:
@@ -96,7 +109,18 @@ def _analizador() -> argparse.ArgumentParser:
         "--por-tienda", type=int, default=50,
         help="Productos a revisar en cada tienda (50).",
     )
-    buscar.add_argument("--orden", choices=motor.ORDENES, default="precio")
+    buscar.add_argument(
+        "--orden", choices=(*motor.ORDENES, "ahorro"), default="precio",
+        help="precio, descuento (el anunciado) o ahorro (el real, frente al precio real).",
+    )
+    buscar.add_argument(
+        "--solo-reales", action="store_true",
+        help="Solo ofertas cuyo precio está de verdad por debajo del precio real.",
+    )
+    buscar.add_argument(
+        "--sin-internacional", action="store_true",
+        help="No investiga el precio internacional (el juicio usa solo tiendas e historial).",
+    )
     buscar.add_argument(
         "--descuento-min", type=float, default=0.0,
         help="Solo ofertas con al menos este porcentaje de descuento.",
@@ -126,6 +150,19 @@ def _analizador() -> argparse.ArgumentParser:
     )
     verificar.add_argument("tienda", help="Identificador de la tienda, por ejemplo amazon.")
 
+    profundo = comandos.add_parser(
+        "verificar",
+        help="Investiga a fondo si las ofertas de un producto son descuentos reales.",
+    )
+    profundo.add_argument("consulta", help='El producto, por ejemplo "galaxy s25 ultra 256gb".')
+    profundo.add_argument("--tiendas", help="Tiendas a revisar, separadas por comas.")
+    profundo.add_argument("--max", type=int, default=8, help="Productos a mostrar (8).")
+    profundo.add_argument("--json", action="store_true", help="Salida en JSON.")
+    profundo.add_argument(
+        "--navegador", action="store_true",
+        help="Además consulta Amazon abriendo Edge, como fuente de precio internacional.",
+    )
+
     ver = comandos.add_parser(
         "historial", help="Muestra los precios guardados de los productos que coincidan."
     )
@@ -154,19 +191,113 @@ def _lista_de_tiendas(texto: str | None) -> list[str] | None:
 
 
 def _buscar_con_historial(
-    consulta: str, tiendas: list[Tienda], usar_historial: bool = True, **opciones
+    consulta: str,
+    tiendas: list[Tienda],
+    usar_historial: bool = True,
+    verificar: dict | None = None,
+    **opciones,
 ) -> Resultado:
-    """Busca, anota lo que el historial sabía y guarda las observaciones nuevas."""
+    """Busca, anota el historial, emite el veredicto de cada oferta y guarda lo observado.
+
+    `verificar` son las opciones de `verificacion.verificar`; con None no se verifica.
+    Sin historial, la base se abre en memoria: el veredicto sigue funcionando, pero no
+    recuerda nada ni aprovecha lo ya consultado afuera.
+    """
     resultado = asyncio.run(motor.buscar(consulta, tiendas, **opciones))
-    if usar_historial:
-        try:
-            with historial.abrir() as conexion:
+    resultado.avisos = []
+    try:
+        ruta = None if usar_historial else historial.EN_MEMORIA
+        with historial.abrir(ruta) as conexion:
+            if usar_historial:
                 historial.anotar(conexion, resultado)
+            if verificar is not None:
+                resultado.grupos, resultado.avisos = asyncio.run(
+                    verificacion.verificar(resultado, conexion, **verificar)
+                )
+            if usar_historial:
                 historial.registrar(conexion, resultado)
-        except Exception as exc:
-            # El historial es un complemento: si falla, la búsqueda sigue siendo válida.
-            print(f"Aviso: no se pudo usar el historial ({exc}).", file=sys.stderr)
+    except Exception as exc:
+        # Historial y veredicto son complementos: si fallan, la búsqueda sigue siendo válida.
+        print(f"Aviso: no se pudo completar la verificación ({exc}).", file=sys.stderr)
     return resultado
+
+
+def _ordenar_por_ahorro(resultado: Resultado) -> None:
+    def clave(oferta: Oferta) -> tuple:
+        ahorro = (oferta.veredicto or {}).get("ahorro_real_pct")
+        return (ahorro is None, -(ahorro or 0), oferta.precio)
+
+    resultado.ofertas.sort(key=clave)
+
+
+def _solo_reales(resultado: Resultado) -> None:
+    resultado.ofertas = [
+        o for o in resultado.ofertas
+        if o.veredicto
+        and o.veredicto["clase"] in veredicto.FAVORABLES
+        and o.veredicto["confianza"] != "aproximada"
+    ]
+
+
+def _verificar_a_fondo(args: argparse.Namespace) -> int:
+    """Comando `verificar`: un informe por producto con toda la evidencia."""
+    try:
+        tiendas = seleccionar(_lista_de_tiendas(args.tiendas))
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    resultado = _buscar_con_historial(
+        args.consulta.strip(), tiendas,
+        verificar={"profundo": True, "con_amazon": args.navegador, "max_grupos": args.max},
+    )
+    grupos = verificacion.ordenar_para_informe(
+        getattr(resultado, "grupos", None) or identidad.agrupar(resultado.ofertas)
+    )[: args.max]
+    if args.json:
+        datos = {
+            "consulta": resultado.consulta,
+            "productos": [
+                {"nombre": g.principal.nombre, "coincidencia": g.via,
+                 "ofertas": [o.a_dict() for o in sorted(g.ofertas, key=lambda o: o.precio)]}
+                for g in grupos
+            ],
+            "avisos": resultado.avisos,
+            "tiendas_fallidas": [asdict(t) for t in resultado.tiendas_fallidas],
+        }
+        print(json.dumps(datos, ensure_ascii=False, indent=2))
+        return 0
+    if not grupos:
+        print(f'No encontré ofertas para "{resultado.consulta}".')
+    for grupo in grupos:
+        print(_recortar(grupo.principal.nombre, 100))
+        primero = grupo.ofertas[0].veredicto or {}
+        afuera = primero.get("internacional")
+        if afuera:
+            clase = {"exacto": "mismo producto", "modelo": "mismo modelo",
+                     "equivalente": "producto equivalente"}[afuera["coincidencia"]]
+            print(
+                f"  Precio internacional ({clase}): US$ {afuera['precio_usd']:,.2f},"
+                f" {pesos(afuera['con_iva'])} con IVA, normal hasta {pesos(afuera['tope_normal'])}"
+            )
+            print(f"    {_recortar(afuera['ejemplo'], 90)}  [{', '.join(afuera['fuentes'])}]")
+        else:
+            print("  Precio internacional: no se halló una referencia confiable.")
+        for o in sorted(grupo.ofertas, key=lambda o: o.precio):
+            antes = (
+                f" (antes {pesos(o.precio_lista)}, -{o.descuento_pct:.0f}%)"
+                if o.descuento_pct
+                else ""
+            )
+            print(f"  {pesos(o.precio):>12}  {o.tienda}{antes}")
+            if o.veredicto:
+                print(f"      >> {o.veredicto['titulo']}: {o.veredicto['texto']}")
+            print(f"      {o.url}")
+        print()
+    for aviso in resultado.avisos:
+        print(f"Aviso: {aviso}")
+    if resultado.tiendas_fallidas:
+        print("No respondieron: " + ", ".join(t.tienda for t in resultado.tiendas_fallidas))
+    return 0
 
 
 def _mostrar_historial(args: argparse.Namespace) -> int:
@@ -296,6 +427,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.comando == "historial":
         return _mostrar_historial(args)
 
+    if args.comando == "verificar":
+        if not args.consulta.strip():
+            print("La consulta no puede estar vacía.", file=sys.stderr)
+            return 2
+        return _verificar_a_fondo(args)
+
     if args.comando == "seguimientos":
         with historial.abrir() as conexion:
             lista = historial.seguimientos(conexion)
@@ -360,20 +497,28 @@ def main(argv: list[str] | None = None) -> int:
         args.consulta.strip(),
         tiendas,
         usar_historial=not args.sin_historial,
+        verificar={"mostradas": args.max, "con_internacional": not args.sin_internacional},
         limite_por_tienda=args.por_tienda,
         incluir_agotados=args.agotados,
         filtrar=not args.sin_filtro,
         descuento_minimo=args.descuento_min,
         precio_maximo=args.precio_max,
-        orden=args.orden,
+        orden="precio" if args.orden == "ahorro" else args.orden,
     )
+    if args.solo_reales:
+        _solo_reales(resultado)
+    if args.orden == "ahorro":
+        _ordenar_por_ahorro(resultado)
     if args.json:
         datos = resultado.a_dict()
+        datos["avisos"] = resultado.avisos
         datos["total_ofertas"] = len(datos["ofertas"])
         datos["ofertas"] = datos["ofertas"][: args.max]
         print(json.dumps(datos, ensure_ascii=False, indent=2))
     else:
         print(presentar(resultado, args.max))
+        for aviso in resultado.avisos:
+            print(f"Aviso: {aviso}")
     # Código 1 si ninguna tienda respondió: no hay resultado en el que confiar.
     return 0 if resultado.tiendas_consultadas else 1
 

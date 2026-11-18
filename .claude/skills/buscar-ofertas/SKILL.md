@@ -19,12 +19,47 @@ uv run ofertas buscar "<consulta>" --json --max 30
 Opciones útiles:
 
 - `--tiendas olimpica,jumbo`: limita a ciertas tiendas (`uv run ofertas tiendas` las lista).
-- `--orden descuento`: ordena por porcentaje de descuento en vez de por precio.
+- `--orden descuento`: ordena por el descuento que anuncia la tienda (poco fiable).
+- `--orden ahorro`: ordena por el ahorro real frente al precio real.
+- `--solo-reales`: deja solo descuentos reales y buenos precios comprobados.
 - `--descuento-min 20`: solo ofertas con ese descuento o más.
 - `--precio-max 150000`: tope de precio en pesos.
 - `--por-tienda 100`: revisa más productos por tienda (por defecto 50).
 - `--sin-filtro`: no exige que el nombre contenga todas las palabras buscadas.
 - `--agotados`: incluye productos sin existencias.
+
+## Veredicto: descuentos reales y engañosos (lo más importante)
+
+Cada oferta trae un campo `veredicto`. Úsalo siempre: es la razón de ser del motor. El
+usuario quiere saber si una "oferta" es un descuento de verdad o un precio normal con
+el precio de lista inflado.
+
+Campos: `clase`, `titulo`, `texto` (explicación ya redactada), `precio_real`,
+`ahorro_real_pct`, `descuento_anunciado_pct`, `lista_inflada_pct`, `confianza`
+(`fuerte`, `media` o `aproximada`), `evidencias` e `internacional` (precio en dólares,
+con IVA, tope normal, coincidencia y fuente).
+
+Clases:
+
+- `descuento_real`: recomiéndala, citando el ahorro real y no el anunciado.
+- `oferta_falsa`: adviértelo sin rodeos. El precio es el normal; el "antes" está inflado.
+- `sobreprecio`: aun con el descuento anunciado, está más caro que lo normal.
+- `buen_precio`, `precio_normal`, `caro`: para ofertas sin descuento anunciado.
+- `sin_referencia`: no se pudo comprobar. Dilo así; no la presentes como oferta.
+
+Reglas al responder:
+
+1. Nunca repitas el porcentaje que anuncia la tienda como si fuera el ahorro. Di el
+   `ahorro_real_pct` y el `precio_real`, y de dónde sale (cuántas tiendas, historial o
+   precio internacional).
+2. Si `confianza` es `aproximada`, dilo: la referencia es un producto equivalente.
+3. Si el texto avisa que todo el mercado local está inflado frente al exterior,
+   menciónalo aunque la oferta sea la más barata.
+4. Para pedir solo lo que vale la pena: `--solo-reales --orden ahorro`.
+5. Cuando el usuario pregunte si una oferta concreta es real, usa
+   `uv run ofertas verificar "<producto>" --json`: investiga más productos afuera y
+   espera a las fuentes lentas. Tarda más (hasta un minuto si hay varios productos).
+   Con `--navegador` suma Amazon como fuente internacional (abre Edge).
 
 ## Historial de precios
 

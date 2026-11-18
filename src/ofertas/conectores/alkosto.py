@@ -79,6 +79,10 @@ def interpretar_producto(
         ean=ean,
         eans=[ean] if ean else [],
         imagen=producto.get("img-310wx310h_string"),
+        modelo=str(
+            (producto.get("linea-modelo_string_mv") or producto.get(
+                "linea-modelo-referencia_string_mv") or [""])[0]
+        ).strip(),
     )
 
 

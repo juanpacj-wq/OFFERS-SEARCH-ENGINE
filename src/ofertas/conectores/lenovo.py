@@ -34,6 +34,7 @@ def interpretar_producto(
         url=f"{tienda.url_base}{producto.get('url') or ''}",
         existencias=None if disponible else 0,
         vendedor="Lenovo",
+        modelo=str(producto.get("productCode") or "").strip(),
         # La ruta trae la categoría en español: /p/portatiles/thinkpad/thinkpad-e/...
         categoria=" ".join((producto.get("url") or "").split("/")[2:-1]).replace("-", " "),
     )

@@ -15,11 +15,14 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from statistics import median
 from urllib.parse import urlsplit
 
 from ofertas.entorno import RAIZ
 from ofertas.modelos import Oferta, Resultado
 
+# Base que vive solo mientras dura la búsqueda (para `--sin-historial`).
+EN_MEMORIA = ":memory:"
 # Si el mismo precio se vuelve a ver antes de este tiempo, no se guarda otra vez.
 VENTANA_REPETIDOS = timedelta(hours=6)
 # Para dudar de un descuento hace falta haber visto el producto varias veces y días.
@@ -61,6 +64,17 @@ CREATE TABLE IF NOT EXISTS seguimientos (
     ultima_url TEXT,
     ultima_revision TEXT
 );
+CREATE TABLE IF NOT EXISTS cache_internacional (
+    fuente TEXT NOT NULL,
+    consulta TEXT NOT NULL,
+    fecha TEXT NOT NULL,
+    datos TEXT NOT NULL,
+    PRIMARY KEY (fuente, consulta)
+);
+CREATE TABLE IF NOT EXISTS ajustes (
+    clave TEXT PRIMARY KEY,
+    valor TEXT NOT NULL
+);
 """
 
 
@@ -75,6 +89,7 @@ class Contexto:
     ultimo_precio: float
     ultima_fecha: str
     dias_observado: int
+    mediana: float = 0.0
 
     def a_dict(self, oferta: Oferta) -> dict:
         return {
@@ -83,6 +98,7 @@ class Contexto:
             "dias_observado": self.dias_observado,
             "minimo_visto": self.minimo,
             "maximo_visto": self.maximo,
+            "mediana_vista": self.mediana,
             "precio_anterior": self.ultimo_precio,
             "fecha_anterior": fecha_local(self.ultima_fecha),
             "lectura": leer(oferta, self),
@@ -107,10 +123,13 @@ def ruta_base() -> Path:
     return carpeta / "historial.db"
 
 
-def conectar(ruta: Path | None = None) -> sqlite3.Connection:
-    ruta = ruta or ruta_base()
-    ruta.parent.mkdir(parents=True, exist_ok=True)
-    conexion = sqlite3.connect(ruta)
+def conectar(ruta: Path | str | None = None) -> sqlite3.Connection:
+    if ruta == EN_MEMORIA:
+        conexion = sqlite3.connect(EN_MEMORIA)
+    else:
+        ruta = Path(ruta) if ruta else ruta_base()
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+        conexion = sqlite3.connect(ruta)
     conexion.row_factory = sqlite3.Row
     conexion.execute("PRAGMA foreign_keys = ON")
     conexion.executescript(ESQUEMA)
@@ -178,22 +197,26 @@ def contexto_de(conexion: sqlite3.Connection, oferta: Oferta) -> Contexto | None
     ).fetchone()
     if not fila["veces"]:
         return None
-    ultimo = conexion.execute(
-        """
-        SELECT o.precio FROM observaciones o JOIN productos p ON p.id = o.producto_id
-        WHERE p.tienda_id = ? AND p.clave = ? ORDER BY o.fecha DESC, o.id DESC LIMIT 1
-        """,
-        (oferta.tienda_id, clave_de(oferta)),
-    ).fetchone()
+    precios = [
+        f["precio"]
+        for f in conexion.execute(
+            """
+            SELECT o.precio FROM observaciones o JOIN productos p ON p.id = o.producto_id
+            WHERE p.tienda_id = ? AND p.clave = ? ORDER BY o.fecha, o.id
+            """,
+            (oferta.tienda_id, clave_de(oferta)),
+        )
+    ]
     dias = (datetime.fromisoformat(fila["ultima"]) - datetime.fromisoformat(fila["primera"])).days
     return Contexto(
         veces=fila["veces"],
         primera_vez=fila["primera"],
         minimo=fila["minimo"],
         maximo=fila["maximo"],
-        ultimo_precio=ultimo["precio"],
+        ultimo_precio=precios[-1],
         ultima_fecha=fila["ultima"],
         dias_observado=dias,
+        mediana=median(precios),
     )
 
 
@@ -348,6 +371,6 @@ def anotar_revision(
             )
 
 
-def abrir(ruta: Path | None = None):
+def abrir(ruta: Path | str | None = None):
     """Conexión que se cierra sola: `with historial.abrir() as conexion:`."""
     return closing(conectar(ruta))
